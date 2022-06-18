@@ -1,0 +1,5 @@
+@compiler >= 6
+
+contract Sample =
+    // Get the token owner address
+    entrypoint owner() = "just a sample"
