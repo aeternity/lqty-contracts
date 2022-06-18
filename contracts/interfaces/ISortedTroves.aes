@@ -1,0 +1,63 @@
+// Common interface for the SortedTroves Doubly Linked List.
+contract interface ISortedTroves =
+
+    // --- Events ---
+
+    //event SortedTrovesAddressChanged(address _sortedDoublyLLAddress)
+    //event BorrowerOperationsAddressChanged(address _borrowerOperationsAddress)
+    //event NodeAdded(address _id, uint _NICR)
+    //event NodeRemoved(address _id)
+
+    // --- Functions ---
+
+    stateful entrypoint set_params: (
+          int       // uint256 _size,
+        , address   // TroveManagerAddress,
+        , address   // borrowerOperationsAddress,
+        ) => unit
+
+    stateful entrypoint insert: (
+          address // id
+        , int     // uint256 _ICR
+        , address // prevId
+        , address // nextId
+        ) => unit
+
+    stateful entrypoint remove: (address /*_id*/) => unit
+
+    stateful entrypoint re_insert: (
+          address // id
+        , int     // uint256 _newICR
+        , address // prevId
+        , address // nextId
+        ) => unit
+
+    entrypoint contains: (address /*_id*/) => bool
+
+    entrypoint is_full: () => bool
+
+    entrypoint is_empty: () => bool
+
+    entrypoint get_size: () => int
+
+    entrypoint get_max_size: () => int
+
+    entrypoint get_first: () => address
+
+    entrypoint get_last: () => address
+
+    entrypoint get_next: (address /*_id*/) => address
+
+    entrypoint get_prev: (address /*_id*/) => address
+
+    entrypoint valid_insert_position: (
+        address   // uint256 _ICR
+        , address // prevId
+        , address // nextId
+        ) => bool
+
+    entrypoint find_insert_position: (
+          int     // uint256 _ICR
+        , address // prevId
+        , address // nextId
+        ) => bool

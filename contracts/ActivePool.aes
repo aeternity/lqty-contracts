@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: MIT
+
+/*pragma solidity 0.6.11;*/
+
+include "Option.aes"
+include "./dependencies/SafeMath.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITroveManager.aes"
+include "./interfaces/IStabilityPool.aes"
+include "./interfaces/IDefaultPool.aes"
+include "./dependencies/Utils.aes"
+
+/*
+ * The Active Pool holds the AE collateral and AEUSD debt (but not AEUSD tokens) for all active troves.
+ *
+ * When a trove is liquidated, it's AE and AEUSD debt are transferred from the Active Pool, to either the
+ * Stability Pool, the Default Pool, or both, depending on the liquidation conditions.
+ *
+ */
+contract ActivePool =
+    record addresses = {
+          borrower_operations: IBorrowerOperations
+        , trove_manager: ITroveManager
+        , stability_pool: IStabilityPool
+        , default_pool: IDefaultPool
+        }
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+        , ae: int
+        , aeusd_debt: int
+        }
+    entrypoint init()=
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        {  owner = Some(Call.caller)
+         , addresses = None
+         , ae = 0
+         , aeusd_debt = 0
+         }
+
+    stateful entrypoint setAddresses(addresses: addresses) =
+        //requirement
+        only_owner()
+
+        put( state { addresses = Some(addresses) })
+
+        Chain.event(BorrowerOperationsAddressChanged(addresses.borrower_operations))
+        Chain.event(TroveManagerAddressChanged(addresses.trove_manager))
+        Chain.event(StabilityPoolAddressChanged(addresses.stability_pool))
+        Chain.event(DefaultPoolAddressChanged(addresses.default_pool))
+
+        renounce_ownership()
+
+    /*
+    * Returns the AE state variable.
+    *
+    *Not necessarily equal to the the contract's raw AE balance - ether can be forcibly sent to contracts.
+    */
+    entrypoint get_ae(): int = state.ae
+
+    entrypoint get_aeusd_debt(): int = state.aeusd_debt
+
+    stateful entrypoint send_ae(account: address, amount: int) =
+        //ensure the rights to send ae
+        require_caller_is_bo_or_trovem_or_sp()
+
+        let ae = SafeMath.sub(state.ae, amount)
+        put(state{ ae = ae })
+
+        Chain.event( ActivePoolAEBalanceUpdated(ae))
+        Chain.event(AeSent(account, amount))
+
+        Chain.spend(account,amount)
+
+    stateful entrypoint increase_aeusd_debt(amount: int) =
+        require_caller_is_bo_or_trovem()
+        let aeusd_debt  = SafeMath.add(state.aeusd_debt,amount)
+        put(state{ aeusd_debt = aeusd_debt})
+        Chain.event(ActivePoolAEUSDDebtUpdated(aeusd_debt))
+
+    stateful entrypoint decrease_aeusd_debt(amount: int) =
+        require_caller_is_bo_or_trovem_or_sp
+        let aeusd_debt = SafeMath.sub(state.aeusd_debt,amount)
+        Chain.event(ActivePoolAEUSDDebtUpdated(aeusd_debt))
+
+    // -- FUNCTIONS
+    function withAddresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+        None => abort("no addresses")
+        Some(addresses) => f(addresses)
+
+    function require_caller_is_bo_or_trovem_or_sp() =
+        let sender = Call.caller
+
+        withAddresses((addresses) =>
+                require (
+                    sender == addresses.borrower_operations.address||
+                    sender == addresses.trove_manager.address ||
+                    sender == addresses.stability_pool.address,
+                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
+                    )
+            )
+
+    function require_caller_is_bo_or_trovem() =
+        let sender = Call.caller
+
+        withAddresses((addresses) =>
+                require (
+                    sender == addresses.borrower_operations.address||
+                    sender == addresses.trove_manager.address,
+                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager"
+                    )
+            )
+
+    datatype event
+        = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)
+        | TroveManagerAddressChanged(ITroveManager /*newTroveManagerAddress*/)
+        | ActivePoolAEUSDDebtUpdated(int /*aeusd_debt*/)
+        | ActivePoolAEBalanceUpdated(int /*ae*/)
+//#inject "./interfaces/IPool.events.aes"
+//#inject "./dependencies/Ownable.events.aes"
+
+
+//#inject "./dependencies/Ownable.functions.aes"

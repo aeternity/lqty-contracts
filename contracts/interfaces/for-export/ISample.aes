@@ -1,0 +1,2 @@
+main contract Sample =
+  entrypoint owner : () => string

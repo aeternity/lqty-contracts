@@ -1,0 +1,20 @@
+@compiler >= 6
+
+contract interface ICommunityIssuance =
+
+    // --- Events ---
+
+    /*event LQTYTokenAddressSet(address _lqtyTokenAddress)*/
+    /*event StabilityPoolAddressSet(address _stabilityPoolAddress)*/
+    /*event TotalLQTYIssuedUpdated(uint _totalLQTYIssued)*/
+
+    // --- Functions ---
+
+    stateful entrypoint setAddresses: (
+          address /*lqtyTokenAddress*/
+        , address /*stabilityPoolAddress*/
+        ) => unit
+
+    entrypoint issueLQTY: () => int
+
+    stateful entrypoint sendLQTY: (address /*_account*/, int /*_LQTYamount*/) => unit

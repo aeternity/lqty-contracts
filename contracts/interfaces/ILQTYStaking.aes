@@ -1,0 +1,39 @@
+contract interface ILQTYStaking =
+
+    // --- Events --
+
+    //event LQTYTokenAddressSet(address _lqtyTokenAddress);
+    //event LUSDTokenAddressSet(address _lusdTokenAddress);
+    //event TroveManagerAddressSet(address _troveManager);
+    //event BorrowerOperationsAddressSet(address _borrowerOperationsAddress);
+    //event ActivePoolAddressSet(address _activePoolAddress);
+
+    //event StakeChanged(address indexed staker, uint newStake);
+    //event StakingGainsWithdrawn(address indexed staker, uint LUSDGain, uint AEGain);
+    //event F_AEUpdated(uint _F_AE);
+    //event F_LUSDUpdated(uint _F_LUSD);
+    //event TotalLQTYStakedUpdated(uint _totalLQTYStaked);
+    //event EtherSent(address _account, uint _amount);
+    //event StakerSnapshotsUpdated(address _staker, uint _F_AE, uint _F_LUSD);
+
+    // --- Functions ---
+
+    stateful entrypoint set_addresses: (
+          address // lqtyTokenAddress,
+        , address // lusdTokenAddress,
+        , address // troveManagerAddress,
+        , address // borrowerOperationsAddress,
+        , address // activePoolAddress
+        ) => unit
+
+    stateful entrypoint stake: (int /*_LQTYamount*/) => unit
+
+    stateful entrypoint unstake: (int /*_LQTYamount*/) => unit
+
+    stateful entrypoint increase_f_ae: (int /*_AEFee*/) => unit
+
+    stateful entrypoint increase_f_lusd: (int /*_LQTYFee*/) => unit
+
+    entrypoint get_pending_ae_gain: (address /*_user*/) => int
+
+    entrypoint get_pending_lusd_gain: (address /*_user*/) => int

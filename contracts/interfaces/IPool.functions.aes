@@ -1,0 +1,15 @@
+    //TODO: remove after implementation
+    //event ETHBalanceUpdated(uint _newBalance);
+    //event AEUSDBalanceUpdated(uint _newBalance);
+    //event ActivePoolAddressChanged(address _newActivePoolAddress);
+    //event DefaultPoolAddressChanged(address _newDefaultPoolAddress);
+    //event StabilityPoolAddressChanged(address _newStabilityPoolAddress);
+    //event EtherSent(address _to, uint _amount);
+
+    entrypoint get_ae: () => int
+
+    entrypoint get_aeusd_debt: () => int
+
+    stateful entrypoint increase_aeusd_debt: (int /*_amount*/) => unit
+
+    stateful entrypoint decrease_aeusd_debt: (int /*_amount*/) => unit

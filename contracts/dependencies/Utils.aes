@@ -1,0 +1,2 @@
+namespace Utils =
+    function zero_address(): address = abort("zero_address not implemented")

@@ -1,0 +1,16 @@
+//TODO: this might include also AEX9 
+contract interface ILQTYToken =
+
+    // --- Events ---
+
+    /*event CommunityIssuanceAddressSet(address _communityIssuanceAddress)*/
+    /*event LQTYStakingAddressSet(address _lqtyStakingAddress)*/
+    /*event LockupContractFactoryAddressSet(address _lockupContractFactoryAddress)*/
+
+    // --- Functions ---
+
+    stateful entrypoint send_to_lqty_staking: (address /*sender*/, int /*uint256 _amount*/) => unit
+
+    entrypoint get_deployment_start_time: () => int
+
+    entrypoint get_lp_rewards_entitlement: () => int

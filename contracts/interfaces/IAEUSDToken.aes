@@ -1,0 +1,20 @@
+//TODO: this might include also AEX9 
+contract interface IAEUSDToken =
+
+    // --- Events ---
+
+    /*event TroveManagerAddressChanged(address _troveManagerAddress)*/
+    /*event StabilityPoolAddressChanged(address _newStabilityPoolAddress)*/
+    /*event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress)*/
+
+    /*event AEUSDTokenBalanceUpdated(address _user, uint _amount)*/
+
+    // --- Functions ---
+
+    stateful entrypoint mint: (address /*account*/, int /*uint256 _amount*/) => unit
+
+    stateful entrypoint burn: (address /*account*/, int /*uint256 _amount*/) => unit
+
+    stateful entrypoint send_to_pool: (address /*_sender*/,  address /*poolAddress*/, int /*uint256 _amount*/) => unit
+
+    stateful entrypoint return_from_pool: (address /*poolAddress*/, address /*user*/, int /*uint256 _amount*/ ) => unit

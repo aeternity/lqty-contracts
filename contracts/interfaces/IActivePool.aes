@@ -1,0 +1,14 @@
+@compiler >= 6
+
+//NOTE: this interface should be used also with ./IPool.aes
+contract interface IActivePool =
+    // --- Events ---
+    /*event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress);*/
+    /*event TroveManagerAddressChanged(address _newTroveManagerAddress);*/
+    /*event ActivePoolLUSDDebtUpdated(uint _LUSDDebt);*/
+    /*event ActivePoolETHBalanceUpdated(uint _ETH);*/
+
+    // --- Functions ---
+    stateful entrypoint send_ae: (address /*_account*/, int /*_amount*/) => unit
+
+//#inject "IPool.functions.aes"

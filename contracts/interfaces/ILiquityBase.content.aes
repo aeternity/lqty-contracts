@@ -1,0 +1,2 @@
+    //TODO: this might return int, we have to see the implementation
+    entrypoint price_feed:() => IPriceFeed

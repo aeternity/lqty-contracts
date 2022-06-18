@@ -1,0 +1,143 @@
+include "./IPriceFeed.aes"
+include "./IStabilityPool.aes"
+include "./IAEUSDToken.aes"
+include "./ILQTYToken.aes"
+include "./ILQTYStaking.aes"
+include "./IActivePool.aes"
+
+
+// NOTE:  this is also ILiquityBase
+contract interface ITroveManager =
+
+    // --- Events ---
+
+    //event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress)
+    //event PriceFeedAddressChanged(address _newPriceFeedAddress)
+    //event AEUSDTokenAddressChanged(address _newAEUSDTokenAddress)
+    //event ActivePoolAddressChanged(address _activePoolAddress)
+    //event DefaultPoolAddressChanged(address _defaultPoolAddress)
+    //event StabilityPoolAddressChanged(address _stabilityPoolAddress)
+    //event GasPoolAddressChanged(address _gasPoolAddress)
+    //event CollSurplusPoolAddressChanged(address _collSurplusPoolAddress)
+    //event SortedTrovesAddressChanged(address _sortedTrovesAddress)
+    //event LQTYTokenAddressChanged(address _lqtyTokenAddress)
+    //event LQTYStakingAddressChanged(address _lqtyStakingAddress)
+
+    //event Liquidation(uint _liquidatedDebt, uint _liquidatedColl, uint _collGasCompensation, uint _AEUSDGasCompensation)
+    //event Redemption(uint _attemptedAEUSDAmount, uint _actualAEUSDAmount, uint _ETHSent, uint _ETHFee)
+    //event TroveUpdated(address indexed _borrower, uint _debt, uint _coll, uint stake, uint8 operation)
+    //event TroveLiquidated(address indexed _borrower, uint _debt, uint _coll, uint8 operation)
+    //event BaseRateUpdated(uint _baseRate)
+    //event LastFeeOpTimeUpdated(uint _lastFeeOpTime)
+    //event TotalStakesUpdated(uint _newTotalStakes)
+    //event SystemSnapshotsUpdated(uint _totalStakesSnapshot, uint _totalCollateralSnapshot)
+    //event LTermsUpdated(uint _L_ETH, uint _L_AEUSDDebt)
+    //event TroveSnapshotsUpdated(uint _L_ETH, uint _L_AEUSDDebt)
+    //event TroveIndexUpdated(address _borrower, uint _newIndex)
+
+    // --- Functions ---
+
+    entrypoint set_addresses: (
+              address //borrowerOperationsAddress,
+            , address //activePoolAddress,
+            , address //defaultPoolAddress,
+            , address //stabilityPoolAddress,
+            , address //gasPoolAddress,
+            , address //collSurplusPoolAddress,
+            , address //priceFeedAddress,
+            , address //lusdTokenAddress,
+            , address //sortedTrovesAddress,
+            , address //lqtyTokenAddress,
+            , address //lqtyStakingAddress
+            ) => unit
+
+    entrypoint stability_pool: () => IStabilityPool
+    entrypoint lusd_token: () => IAEUSDToken
+    entrypoint lqty_token: () => ILQTYToken
+    entrypoint lqty_staking: () => ILQTYStaking
+
+    entrypoint get_trove_owners_count: () => int
+
+    entrypoint get_trove_from_trove_owners_array: (int /*uint _index*/) => address
+
+    entrypoint get_nominal_icr: (address /*_borrower*/) => int
+    entrypoint get_current_icr: (address /*_borrower*/, int /*uint _price*/) => int
+
+    stateful entrypoint liquidate: (address /*_borrower*/) => unit
+
+    stateful entrypoint liquidate_troves: (int /*uint _n*/) => unit
+
+    stateful entrypoint batch_liquidate_troves: (list(address) /*_troveArray*/) => unit
+
+    stateful entrypoint redeem_collateral: (
+          int       // uint _AEUSDAmount,
+        , address   // firstRedemptionHint,
+        , address   // upperPartialRedemptionHint,
+        , address   // lowerPartialRedemptionHint,
+        , int       // partialRedemptionHintNICR,
+        , int       // maxIterations,
+        , int       // maxFee
+        ) => unit
+
+    stateful entrypoint update_stake_and_total_stakes: (address /*_borrower*/) => int
+
+    stateful entrypoint update_trove_reward_snapshots: (address /*_borrower*/) => int
+
+    stateful entrypoint add_trove_owner_to_array: (address /*_borrower*/) => int
+
+    stateful entrypoint apply_pending_rewards: (address /*_borrower*/) => unit
+
+    entrypoint get_pending_eth_reward: (address /*_borrower*/) => int
+
+    entrypoint get_pending_aeusd_debt_reward: (address /*_borrower*/) => int
+
+    entrypoint has_pending_rewards: (address /*_borrower*/) => bool
+
+    record debt_and_coll = {
+          debt: int
+        , coll: int
+        , pending_aeusd_debt_reward: int
+        , pending_eth_reward: int }
+
+    entrypoint get_entire_debt_and_coll: (address /*_borrower*/) => debt_and_coll
+
+    stateful entrypoint close_trove: (address /*_borrower*/) => unit
+
+    stateful entrypoint remove_stake: (address /*_borrower*/) => unit
+
+    entrypoint get_redemption_rate: () => int
+    entrypoint get_redemption_rate_with_decay: () => int
+
+    entrypoint get_redemption_fee_with_decay:(int /*uint _ETHDrawn*/) => int
+
+    entrypoint get_borrowing_rate: () => int
+    entrypoint get_borrowing_rate_with_decay: () => int
+
+    entrypoint get_borrowing_fee: (int /*uint AEUSDDebt*/) => int
+    entrypoint get_borrowing_fee_with_decay: (int /*uint _AEUSDDebt*/) => int
+
+    stateful entrypoint decay_base_rate_from_borrowing: () => unit
+
+    entrypoint get_trove_status: (address /*_borrower*/) => unit
+
+    entrypoint get_trove_stake: (address /*_borrower*/) => int
+
+    entrypoint get_trove_debt: (address /*_borrower*/) => int
+
+    entrypoint get_trove_coll: (address /*_borrower*/) => int
+
+    stateful entrypoint set_trove_status: (address /*_borrower*/, int /*uint num*/) => int
+
+    stateful entrypoint increase_trove_coll: (address /*_borrower*/, int /*uint _collIncrease*/) => int
+
+    stateful entrypoint decrease_trove_coll: (address /*_borrower*/, int /*uint _collDecrease*/) => int
+
+    stateful entrypoint increase_trove_debt:(address /*_borrower*/, int /*uint _debtIncrease*/) => int
+
+    stateful entrypoint decrease_trove_debt: (address /*_borrower*/, int /*uint _collDecrease*/) => int
+
+    entrypoint get_tcr: (int /*uint _price*/) => int
+
+    entrypoint check_recovery_mode: (int /*uint _price*/) => bool
+
+//#inject "./ILiquityBase.content.aes"

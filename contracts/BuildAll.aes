@@ -1,0 +1,15 @@
+@compiler >= 6
+
+include "./interfaces/IPool.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ILiquityBase.aes"
+include "./interfaces/ILockupContractFactory.aes"
+include "./interfaces/ILQTYToken.aes"
+include "./interfaces/ILQTYStaking.aes"
+include "./interfaces/IAEUSDToken.aes"
+include "./interfaces/ISortedTroves.aes"
+include "./interfaces/ITellorCaller.aes"
+include "./ActivePool.aes"
+
+main contract BuildAll =
+    entrypoint init() = ()
