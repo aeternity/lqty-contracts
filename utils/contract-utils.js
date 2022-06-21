@@ -2,10 +2,24 @@ const fs = require( 'fs' )
 const path = require( 'path' )
 
 const getContractContent = ( contractSource ) => {
-    return fs.readFileSync( contractSource, 'utf8' )
+    const contractContent = fs.readFileSync( contractSource, 'utf8' )
+    const rgx = /^\s*\/\/\s*#inject\s+"([\d\w/.\-_]+)"/gmi
+    const rgxMainPath = /.*\//g
+    const match = rgx.exec( contractContent )
+    if ( !match ) {
+        return contractContent
+    }
+    const contractPath = rgxMainPath.exec( contractSource )
+    const ret = contractContent.replace( rgx, ( _, relativePath, ) => {
+        const includePath = path.resolve( `${contractPath[0]}/${relativePath}` )
+        return getContractContent( includePath )
+    } )
+    //console.log( ret )
+    return ret
+
 }
 
-const getFilesystem = ( contractSource ) => {
+const getFilesystemEx = ( contractSource ) => {
     console.log( `Creating filesystem by checking includes for: ${contractSource}` )
     const defaultIncludes = [
         'List.aes', 'Option.aes', 'String.aes',
@@ -21,7 +35,7 @@ const getFilesystem = ( contractSource ) => {
 
     const match = rgx.exec( contractContent )
     if ( !match ) {
-        return filesystem
+        return { filesystem, contractContent }
     }
     const rootIncludes = contractContent.match( rgx )
     for ( let i = 0; i < rootIncludes.length; i++ ) {
@@ -36,17 +50,18 @@ const getFilesystem = ( contractSource ) => {
         console.log( `=> Adding include: ${includeRelativePath[1]}` )
         const includePath = path.resolve( `${contractPath[0]}/${includeRelativePath[1]}` )
         try {
-            const includeContent = fs.readFileSync( includePath, 'utf-8' )
-            filesystem[includeRelativePath[1]] = includeContent
+            const ret = getFilesystemEx( includePath )
+            filesystem[includeRelativePath[1]] = ret.contractContent
+            Object.assign( filesystem, ret.filesystem )
         } catch ( error ) {
             throw Error( `File to include '${includeRelativePath[1]}' not found.` )
         }
         console.log( `` )
-        Object.assign( filesystem, getFilesystem( includePath ) )
     }
     console.log( `` )
-    return filesystem
+    return { filesystem, contractContent }
 }
+const getFilesystem = ( contractSource ) => getFilesystemEx( contractSource ).filesystem
 
 module.exports = {
     getContractContent,

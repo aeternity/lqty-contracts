@@ -1,0 +1,10 @@
+@compiler >= 6
+
+// Common interface for the Pools.
+contract interface IPriceFeed  =
+
+    // --- Events ---
+    //event LastGoodPriceUpdated(uint _lastGoodPrice);
+
+    // --- Function ---
+    entrypoint fetch_price: () => int

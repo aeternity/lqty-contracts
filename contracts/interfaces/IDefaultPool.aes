@@ -1,0 +1,13 @@
+@compiler >= 6
+
+//NOTE: this interface should be used also with ./IPool.aes
+contract interface IDefaultPool =
+    // --- Events ---
+    /*event TroveManagerAddressChanged(address _newTroveManagerAddress);*/
+    /*event DefaultPoolLUSDDebtUpdated(uint _LUSDDebt);*/
+    /*event DefaultPoolETHBalanceUpdated(uint _ETH);*/
+
+    // --- Functions ---
+    stateful entrypoint send_ae_to_active_pool: (int /*uint amount*/) => unit
+
+//#inject "./IPool.content.aes"

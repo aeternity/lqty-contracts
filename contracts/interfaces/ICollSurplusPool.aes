@@ -1,0 +1,29 @@
+@compiler >= 6
+
+
+contract interface ICollSurplusPool =
+
+    // --- Events ---
+    
+    //event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress);
+    //event TroveManagerAddressChanged(address _newTroveManagerAddress);
+    //event ActivePoolAddressChanged(address _newActivePoolAddress);
+
+    //event CollBalanceUpdated(address indexed _account, uint _newBalance);
+    //event EtherSent(address _to, uint _amount);
+
+    // --- Contract setters ---
+
+    stateful entrypoint set_addresses: (
+          address /*_borrowerOperationsAddress*/
+        , address /*_troveManagerAddress*/
+        , address /*_activePoolAddress*/
+        ) => unit
+
+    entrypoint get_ae: () => int
+
+    entrypoint get_collateral: (address /*_account*/) => int
+
+    stateful entrypoint account_surplus: (address /*account*/, int /*amount*/) => unit
+
+    stateful entrypoint claim_coll: (address /*account*/) =>  unit

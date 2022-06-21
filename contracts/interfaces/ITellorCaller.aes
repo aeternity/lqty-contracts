@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: MIT
+
+contract interface ITellorCaller =
+    entrypoint get_tellor_current_value: (int /*uint256 _requestId*/) => (bool * int * int)

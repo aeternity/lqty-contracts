@@ -88,13 +88,13 @@ const deploy = async ( secretKey, network, compiler ) => {
         deployContract_( { file }, params, interfaceName )
     const deployments =
         [
-            /* 00 */ () => deployContract( './contracts/Sample.aes',
+            /* 00 */ () => deployContract( './contracts/BuildAll.aes',
                 [],
-                'ISample.aes',
             ),
         ]
     try {
-        for ( const dep of deployments ) { await dep() }
+        //for ( const dep of deployments ) { await dep() }
+        await deployments[0]()
     } catch ( ex ) {
         //empty
     }

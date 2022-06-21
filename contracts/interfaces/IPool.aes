@@ -1,0 +1,5 @@
+@compiler >= 6
+
+// Common interface for the Pools.
+contract interface IPool =
+// #inject "./IPool.content.aes"

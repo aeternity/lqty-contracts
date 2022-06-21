@@ -1,0 +1,6 @@
+@compiler >= 6
+
+include "./IPriceFeed.aes"
+
+contract interface ILiquityBase  =
+// #inject "./ILiquityBase.content.aes"
