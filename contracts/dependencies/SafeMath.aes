@@ -1,0 +1,78 @@
+namespace SafeMath =
+    /**
+      * ensure nonnegative
+     * 
+     * Requirements:
+     * - The both a and be should be positive
+     */
+    function add(a: int, b: int) =
+        let c = a + b
+        require(a >= 0 && b >= 0, "SafeMath: only positive")
+        c
+
+    /**
+     * @dev Returns the subtraction of two unsigned integers
+     * 
+     * Requirements:
+     * - The both a and be should be positive
+     * - The b should be less or equal to a
+     */
+    function sub(a: int, b: int) =
+        subWithMsg(a, b, "SafeMath: subtraction is negative")
+
+    /**
+     * @dev Returns the subtraction of two unsigned integers, reverting with custom message
+     * 
+     * Requirements:
+     * - The both a and be should be positive
+     * - The b should be less or equal to a
+     */
+    function subWithMsg(a: int, b: int, error_message: string) =
+        require(b >= 0 && b =< a, error_message)
+        a - b
+
+    /**
+     * @dev Returns the integer division of two unsigned integers. Reverts on
+     * division by zero. The result is rounded towards zero.
+     * 
+     * Requirements:
+     * - The divisor should be strict positive
+     * - The dividend should be positive
+     */
+    function div(a: int, b: int): int =
+        divWithMsg(a, b, "SafeMath: division by zero")
+
+    /**
+     * @dev Returns the integer division of two unsigned integers. Reverts with custom message on
+     * division by zero. The result is rounded towards zero.
+     * 
+     * Requirements:
+     * - The divisor should be strict positive
+     * - The dividend should be positive
+     */
+    function divWithMsg(a: int, b: int, error_message: string) =
+        require(a >= 0 && b > 0, error_message)
+        a / b
+
+    /**
+     * @dev Returns the remainder of dividing two unsigned integers. (unsigned integer modulo),
+     * Reverts when dividing by zero.
+     *
+     * Requirements:
+     * - The divisor should be strict positive
+     * - The dividend should be positive
+     */
+    function safeMode(a: int, b: int) =
+        safeModeWithMsg(a, b, "SafeMath: modulo by zero")
+
+    /**
+     * @dev Returns the remainder of dividing two unsigned integers. (unsigned integer modulo),
+     * Reverts with custom message when dividing by zero.
+     *
+     * Requirements:
+     * - The divisor should be strict positive
+     * - The dividend should be positive
+     */
+    function safeModeWithMsg(a: int, b: int, error_message: string) =
+        require(a >= 0 && b > 0, error_message)
+        a mod b

@@ -2,4 +2,4 @@
 
 // Common interface for the Pools.
 contract interface IPool =
-// #inject "./IPool.content.aes"
+// #inject "./IPool.functions.aes"

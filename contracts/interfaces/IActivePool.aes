@@ -11,4 +11,4 @@ contract interface IActivePool =
     // --- Functions ---
     stateful entrypoint send_ae: (address /*_account*/, int /*_amount*/) => unit
 
-//#inject "IPool.content.aes"
+//#inject "IPool.functions.aes"

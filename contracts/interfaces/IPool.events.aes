@@ -1,0 +1,6 @@
+         | AEBalanceUpdated(int /*newBalance*/)
+         | AEUSDBalanceUpdated(int /*newBalance*/)
+         | ActivePoolAddressChanged(IActivePool /*newActivePoolAddress*/)
+         | DefaultPoolAddressChanged(IDefaultPool /*newDefaultPoolAddress*/)
+         | StabilityPoolAddressChanged(IStabilityPool /*newStabilityPoolAddress*/)
+         | AeSent(address /*to*/, int /*amount*/)
