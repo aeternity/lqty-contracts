@@ -14,22 +14,26 @@ include "./ILQTYStaking.aes"
 contract interface IBorrowerOperations =
     // --- Events ---
 
-    //event TroveManagerAddressChanged(address _newTroveManagerAddress);
-    //event ActivePoolAddressChanged(address _activePoolAddress);
-    //event DefaultPoolAddressChanged(address _defaultPoolAddress);
-    //event StabilityPoolAddressChanged(address _stabilityPoolAddress);
-    //event GasPoolAddressChanged(address _gasPoolAddress);
-    //event CollSurplusPoolAddressChanged(address _collSurplusPoolAddress);
-    //event PriceFeedAddressChanged(address  _newPriceFeedAddress);
-    //event SortedTrovesAddressChanged(address _sortedTrovesAddress);
-    //event LUSDTokenAddressChanged(address _lusdTokenAddress);
-    //event LQTYStakingAddressChanged(address _lqtyStakingAddress);
+    //event TroveManagerAddressChanged(address _newTroveManagerAddress)
+    //event ActivePoolAddressChanged(address _activePoolAddress)
+    //event DefaultPoolAddressChanged(address _defaultPoolAddress)
+    //event StabilityPoolAddressChanged(address _stabilityPoolAddress)
+    //event GasPoolAddressChanged(address _gasPoolAddress)
+    //event CollSurplusPoolAddressChanged(address _collSurplusPoolAddress)
+    //event PriceFeedAddressChanged(address  _newPriceFeedAddress)
+    //event SortedTrovesAddressChanged(address _sortedTrovesAddress)
+    //event AEUSDTokenAddressChanged(address _lusdTokenAddress)
+    //event LQTYStakingAddressChanged(address _lqtyStakingAddress)
 
-    //event TroveCreated(address indexed _borrower, int arrayIndex);
-    //event TroveUpdated(address indexed _borrower, int _debt, int _coll, int stake, int8 operation);
-    //event LUSDBorrowingFeePaid(address indexed _borrower, int _LUSDFee);
+    //event TroveCreated(address indexed _borrower, int arrayIndex)
+    //event TroveUpdated(address indexed _borrower, int _debt, int _coll, int stake, int8 operation)
+    //event AEUSDBorrowingFeePaid(address indexed _borrower, int _AEUSDFee)
 
     // --- Functions ---
+
+    /*datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove*/
+
+
 
     //TODO: all these should be casted to proper interfaces
     stateful entrypoint set_addresses: (

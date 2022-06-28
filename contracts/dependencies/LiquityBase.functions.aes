@@ -1,0 +1,66 @@
+/*
+* Base contract for TroveManager, BorrowerOperations and StabilityPool. Contains global system constants and
+* common functions.
+*/
+    entrypoint pct_100() = 1000000000000000000 // 1e18 == 100%
+
+    // Minimum collateral ratio for individual troves
+    entrypoint mcr() = 1100000000000000000 // 110%
+
+    // Critical system collateral ratio. If the system's total collateral ratio (TCR) falls below the CCR, Recovery Mode is triggered.
+    entrypoint ccr() = 1500000000000000000 // 150%
+
+    // Amount of AEUSD to be locked in gas pool on opening troves
+    //TODO: for the moment we set gas compensation to 0
+    /*entrypoint aeusd_gas_compensation() = 200000000000000000000 // 200e18*/
+    entrypoint aeusd_gas_compensation() = 0
+
+    // Minimum amount of net AEUSD debt a trove must have
+    entrypoint min_net_debt() = 1800000000000000000000 // 1800e18
+    //entrypoint min_net_debt() = 0
+
+    entrypoint percent_divisor() = 200 // dividing by 200 yields 0.5%
+
+    entrypoint borrowing_fee_floor() = Utils.decimal_precision() / 1000 * 5 // 0.5%
+
+    function withAddresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+        None => abort("no addresses")
+        Some(addresses) => f(addresses)
+
+    //// --- Gas compensation functions ---
+
+    // Returns the composite debt (drawn debt + gas compensation) of a trove, for the purpose of ICR calculation
+    function get_composite_debt(debt: int) =
+        SafeMath.add(debt,aeusd_gas_compensation())
+
+    function get_net_debt(debt: int) =
+        SafeMath.sub(debt,aeusd_gas_compensation())
+
+    // Return the amount of ETH to be drawn from a trove's collateral and sent as gas compensation.
+    function get_coll_gas_compensation(entire_coll: int) =
+        SafeMath.div(entire_coll,percent_divisor())
+
+    entrypoint get_entire_system_coll(): int /*entireSystemColl*/ = withAddresses((addresses) =>
+            let active_coll = addresses.active_pool.get_ae()
+            let liquidated_coll = addresses.default_pool.get_ae()
+            SafeMath.add(active_coll,liquidated_coll)
+        )
+
+    entrypoint get_entire_system_debt(): int /*entireSystemDebt*/ = withAddresses((addresses) =>
+            let active_coll = addresses.active_pool.get_ae()
+            let closed_debt = addresses.default_pool.get_aeusd_debt()
+            SafeMath.add(active_coll,closed_debt)
+        )
+
+    function get_tcr(price: int): int =
+        let entire_system_coll = get_entire_system_coll()
+        let entire_system_debt = get_entire_system_debt()
+
+        LiquityMath.compute_cr(entire_system_coll, entire_system_debt, price)
+
+    function check_recovery_mode(price: int): bool =
+        get_tcr(price) < ccr()
+
+    function require_userAccepts_fee(fee: int, amount: int,max_fee_percentage: int) =
+        let fee_percentage = SafeMath.div(fee * Utils.decimal_precision(),amount)
+        require(fee_percentage =< max_fee_percentage, "Fee exceeded provided maximum")

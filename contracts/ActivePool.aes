@@ -1,6 +1,4 @@
-// SPDX-License-Identifier: MIT
-
-/*pragma solidity 0.6.11;*/
+@compiler >= 6
 
 include "Option.aes"
 include "./dependencies/SafeMath.aes"
@@ -38,7 +36,7 @@ contract ActivePool =
          , aeusd_debt = 0
          }
 
-    stateful entrypoint setAddresses(addresses: addresses) =
+    stateful entrypoint set_addresses(addresses: addresses) =
         //requirement
         only_owner()
 
@@ -109,7 +107,13 @@ contract ActivePool =
                     sender == addresses.trove_manager.address,
                     "ActivePool: Caller is neither BorrowerOperations nor TroveManager"
                     )
-            )
+             )
+    //TODO: how do we do it in Sophia??!?!
+    /*receive() external payable {*/
+        /*_requireCallerIsBorrowerOperationsOrDefaultPool();*/
+        /*ETH = ETH.add(msg.value);*/
+        /*emit ActivePoolETHBalanceUpdated(ETH);*/
+    /*}*/
 
     datatype event
         = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)

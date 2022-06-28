@@ -1,0 +1,169 @@
+@compiler >= 6
+
+include "Option.aes"
+include "./dependencies/SafeMath.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITroveManager.aes"
+include "./interfaces/IStabilityPool.aes"
+include "./interfaces/IDefaultPool.aes"
+include "./dependencies/Utils.aes"
+include "./interfaces/ICollSurplusPool.aes"
+include "./interfaces/IPriceFeed.aes"
+include "./interfaces/ISortedTroves.aes"
+include "./interfaces/IAEUSDToken.aes"
+include "./interfaces/ILQTYStaking.aes"
+include "./dependencies/LiquityMath.aes"
+
+contract BorrowerOperations =
+
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+        }
+
+    record addresses = {
+          borrower_operations: IBorrowerOperations
+        , trove_manager: ITroveManager
+        , stability_pool: IStabilityPool
+        , default_pool: IDefaultPool
+        , coll_surplus_pool: ICollSurplusPool
+        , lqty_staking: ILQTYStaking
+        , aeusd_token: IAEUSDToken
+        , sorted_troves: ISortedTroves
+        , active_pool: IActivePool
+        , price_feed: IPriceFeed
+        }
+
+
+    // A doubly linked list of Troves, sorted by their collateral ratios
+
+    record adjust_trove = {
+          price: int
+        , is_coll_increase: bool
+        , coll_change: int
+        , net_debt_change: int
+        , debt: int
+        , coll: int
+        , old_icr: int
+        , new_icr: int
+        , new_tcr: int
+        , aeusd_fee: int
+        , new_debt: int
+        , new_coll: int
+        , stake: int
+        }
+
+    record open_trove = {
+          price: int
+        , aeusd_fee: int
+        , net_debt: int
+        , composite_debt: int
+        , icr: int
+        , nicr: int
+        , stake: int
+        , array_index: int
+        }
+
+    record contracts_cache = {
+          trove_manager: ITroveManager
+        , active_pool: IActivePool
+        , aeusd_token: IAEUSDToken
+        }
+
+    //NOTE: we are declaring it here because pattern matching
+    //doesn't play well with sum types declared in interfaces
+    datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove
+
+    function
+        borrower_operation_to_str: borrower_operation => string
+        borrower_operation_to_str(OpenTrove) = "open"
+        borrower_operation_to_str(CloseTrove) = "close"
+        borrower_operation_to_str(AdjustTrove) = "adjust"
+
+    //------------------------------------------------------------------------------
+    // ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    entrypoint init()=
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        {  owner = Some(Call.caller)
+         , addresses = None
+         }
+
+    stateful entrypoint set_addresses(addresses: addresses) =
+        //requirement
+        only_owner()
+
+        put( state { addresses = Some(addresses) })
+
+        Chain.event(TroveManagerAddressChanged(addresses.trove_manager))
+        Chain.event(ActivePoolAddressChanged(addresses.active_pool))
+        Chain.event(DefaultPoolAddressChanged(addresses.default_pool))
+        Chain.event(StabilityPoolAddressChanged(addresses.stability_pool))
+        Chain.event(CollSurplusPoolAddressChanged(addresses.coll_surplus_pool))
+        Chain.event(PriceFeedAddressChanged(addresses.price_feed))
+        Chain.event(SortedTrovesAddressChanged(addresses.sorted_troves))
+        Chain.event(AEUSDTokenAddressChanged(addresses.aeusd_token))
+        Chain.event(LQTYStakingAddressChanged(addresses.lqty_staking))
+
+        renounce_ownership()
+
+        //TODO: gas pool
+        /*Chain.event(GasPoolAddressChanged(addresses.gas_pool))*/
+
+    //------------------------------------------------------------------------------
+    // CONSTRAINT FUNCTIONS
+    //------------------------------------------------------------------------------
+    /*function require_valid_max_fee_percentage(max_fee_percentage: int , is_recovery_mode: bool) =*/
+        /*if (is_recovery_mode)*/
+            /*require(max_fee_percentage <= DECIMAL_PRECISION,*/
+                /*"Max fee percentage must less than or equal to 100%");*/
+        /*} else {*/
+            /*require(_maxFeePercentage >= BORROWING_FEE_FLOOR && _maxFeePercentage <= DECIMAL_PRECISION,*/
+                /*"Max fee percentage must be between 0.5% and 100%");*/
+        /*}*/
+    /*}*/
+
+    //------------------------------------------------------------------------------
+    // OTHER FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    //------------------------------------------------------------------------------
+    // EVENTS
+    //------------------------------------------------------------------------------
+
+    datatype event
+        = TroveManagerAddressChanged(ITroveManager /*newTroveManagerAddress*/)
+        //TODO: will see if we implement this
+        /*| GasPoolAddressChanged(address _gasPoolAddress)*/
+        | CollSurplusPoolAddressChanged(ICollSurplusPool /*collSurplusPoolAddress*/)
+        | PriceFeedAddressChanged(IPriceFeed  /*newPriceFeedAddress*/)
+        | SortedTrovesAddressChanged(ISortedTroves /*sortedTrovesAddress*/)
+        | AEUSDTokenAddressChanged(IAEUSDToken /*aeusdTokenAddress*/)
+        | LQTYStakingAddressChanged(ILQTYStaking /*lqtyStakingAddress*/)
+
+        | TroveCreated(address /*indexed borrower*/, int /*uint arrayIndex*/)
+        | TroveUpdated(
+            address /*indexed _borrower*/
+            , string
+            /*
+            , borrower_operations
+            , uint _debt
+            , uint _coll
+            , uint stake
+            */
+        )
+        | AEUSDBorrowingFeePaid(address /*indexed _borrower*/, int /*_AEUSDFee*/)
+//#inject "./interfaces/IPool.events.aes"
+//#inject "./dependencies/Ownable.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+
+//#inject "./dependencies/Ownable.functions.aes"
+//#inject "./dependencies/LiquityBase.functions.aes"
