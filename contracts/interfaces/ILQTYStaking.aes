@@ -3,7 +3,7 @@ contract interface ILQTYStaking =
     // --- Events --
 
     //event LQTYTokenAddressSet(address _lqtyTokenAddress);
-    //event LUSDTokenAddressSet(address _lusdTokenAddress);
+    //event LUSDTokenAddressSet(address _aeusdTokenAddress);
     //event TroveManagerAddressSet(address _troveManager);
     //event BorrowerOperationsAddressSet(address _borrowerOperationsAddress);
     //event ActivePoolAddressSet(address _activePoolAddress);
@@ -20,7 +20,7 @@ contract interface ILQTYStaking =
 
     stateful entrypoint set_addresses: (
           address // lqtyTokenAddress,
-        , address // lusdTokenAddress,
+        , address // aeusdTokenAddress,
         , address // troveManagerAddress,
         , address // borrowerOperationsAddress,
         , address // activePoolAddress
@@ -32,8 +32,8 @@ contract interface ILQTYStaking =
 
     stateful entrypoint increase_f_ae: (int /*_AEFee*/) => unit
 
-    stateful entrypoint increase_f_lusd: (int /*_LQTYFee*/) => unit
+    stateful entrypoint increase_f_aeusd: (int /*_LQTYFee*/) => unit
 
     entrypoint get_pending_ae_gain: (address /*_user*/) => int
 
-    entrypoint get_pending_lusd_gain: (address /*_user*/) => int
+    entrypoint get_pending_aeusd_gain: (address /*_user*/) => int

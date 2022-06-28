@@ -1,6 +1,4 @@
-// SPDX-License-Identifier: MIT
-
-/*pragma solidity 0.6.11;*/
+@compiler >= 6
 
 include "Option.aes"
 include "./dependencies/SafeMath.aes"
@@ -38,7 +36,7 @@ contract ActivePool =
          , aeusd_debt = 0
          }
 
-    stateful entrypoint setAddresses(addresses: addresses) =
+    stateful entrypoint set_addresses(addresses: addresses) =
         //requirement
         only_owner()
 
@@ -84,32 +82,44 @@ contract ActivePool =
         Chain.event(ActivePoolAEUSDDebtUpdated(aeusd_debt))
 
     // -- FUNCTIONS
-    function withAddresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
-        None => abort("no addresses")
+    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+        None => abort("ActivePool: no addresses")
         Some(addresses) => f(addresses)
 
     function require_caller_is_bo_or_trovem_or_sp() =
         let sender = Call.caller
 
-        withAddresses((addresses) =>
+        with_addresses((addresses) =>
                 require (
                     sender == addresses.borrower_operations.address||
                     sender == addresses.trove_manager.address ||
                     sender == addresses.stability_pool.address,
-                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
+                    "ActivePool: Call is neither BorrowerOperations nor TroveManager nor StabilityPool"
                     )
             )
 
     function require_caller_is_bo_or_trovem() =
         let sender = Call.caller
 
-        withAddresses((addresses) =>
+        with_addresses((addresses) =>
                 require (
                     sender == addresses.borrower_operations.address||
                     sender == addresses.trove_manager.address,
-                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager"
+                    "ActivePool: Call is neither BorrowerOperations nor TroveManager"
                     )
-            )
+             )
+
+    function require_caller_is_borrower_operations_or_default_pool() = with_addresses( (addresses) =>
+            require(
+                Call.caller == addresses.borrower_operations.address ||
+                Call.caller == addresses.default_pool.address ,
+                "ActivePool: Call is neither BO nor Default Pool")
+        )
+
+    payable stateful entrypoint receive_ae() =
+        require_caller_is_borrower_operations_or_default_pool()
+        put( state { ae @ p = p + Call.value } )
+        Chain.event( ActivePoolAEBalanceUpdated(state.ae) )
 
     datatype event
         = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)

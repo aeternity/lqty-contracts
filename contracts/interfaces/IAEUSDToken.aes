@@ -18,3 +18,5 @@ contract interface IAEUSDToken =
     stateful entrypoint send_to_pool: (address /*_sender*/,  address /*poolAddress*/, int /*uint256 _amount*/) => unit
 
     stateful entrypoint return_from_pool: (address /*poolAddress*/, address /*user*/, int /*uint256 _amount*/ ) => unit
+
+//#inject "./IAEX9.functions.aes"

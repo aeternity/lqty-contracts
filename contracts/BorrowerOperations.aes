@@ -1,0 +1,708 @@
+@compiler >= 6
+
+include "Option.aes"
+include "./dependencies/SafeMath.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITroveManager.aes"
+include "./interfaces/IStabilityPool.aes"
+include "./interfaces/IDefaultPool.aes"
+include "./dependencies/Utils.aes"
+include "./interfaces/ICollSurplusPool.aes"
+include "./interfaces/IPriceFeed.aes"
+include "./interfaces/ISortedTroves.aes"
+include "./interfaces/IAEUSDToken.aes"
+include "./interfaces/ILQTYStaking.aes"
+include "./dependencies/LiquityMath.aes"
+include "./dependencies/Utils.aes"
+
+contract BorrowerOperations =
+
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+        }
+
+    record addresses = {
+          borrower_operations: IBorrowerOperations
+        , trove_manager: ITroveManager
+        , stability_pool: IStabilityPool
+        , default_pool: IDefaultPool
+        , coll_surplus_pool: ICollSurplusPool
+        , lqty_staking: ILQTYStaking
+        , aeusd_token: IAEUSDToken
+        , sorted_troves: ISortedTroves
+        , active_pool: IActivePool
+        , price_feed: IPriceFeed
+        , gas_pool: address
+        }
+
+
+    // A doubly linked list of Troves, sorted by their collateral ratios
+
+    record contracts_cache = {
+          trove_manager: ITroveManager
+        , active_pool: IActivePool
+        , aeusd_token: IAEUSDToken
+        }
+
+    //NOTE: we are declaring it here because pattern matching
+    //doesn't play well with sum types declared in interfaces
+    datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove
+
+    function
+        borrower_operation_to_str: borrower_operation => string
+        borrower_operation_to_str(OpenTrove) = "open"
+        borrower_operation_to_str(CloseTrove) = "close"
+        borrower_operation_to_str(AdjustTrove) = "adjust"
+
+    //------------------------------------------------------------------------------
+    // INIT ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    entrypoint init()=
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        {  owner = Some(Call.caller)
+         , addresses = None
+         }
+
+    stateful entrypoint set_addresses(addresses: addresses) =
+        //requirement
+        only_owner()
+
+        put( state { addresses = Some(addresses) })
+
+        Chain.event(TroveManagerAddressChanged(addresses.trove_manager))
+        Chain.event(ActivePoolAddressChanged(addresses.active_pool))
+        Chain.event(DefaultPoolAddressChanged(addresses.default_pool))
+        Chain.event(StabilityPoolAddressChanged(addresses.stability_pool))
+        Chain.event(CollSurplusPoolAddressChanged(addresses.coll_surplus_pool))
+        Chain.event(PriceFeedAddressChanged(addresses.price_feed))
+        Chain.event(SortedTrovesAddressChanged(addresses.sorted_troves))
+        Chain.event(AEUSDTokenAddressChanged(addresses.aeusd_token))
+        Chain.event(LQTYStakingAddressChanged(addresses.lqty_staking))
+        Chain.event(GasPoolAddressChanged(addresses.gas_pool))
+
+        renounce_ownership()
+
+    //------------------------------------------------------------------------------
+    // DATA GETTERS
+    //------------------------------------------------------------------------------
+
+    entrypoint name() = "BorrowerOperations"
+
+    // --- Connected contract declarations ---
+    entrypoint trove_manager() = with_addresses((addresses) => addresses.trove_manager)
+
+    entrypoint stability_pool() = with_addresses((addresses) => addresses.stability_pool)
+
+    entrypoint gas_pool() = with_addresses((addresses) => addresses.gas_pool)
+
+    entrypoint coll_surplus_pool() = with_addresses((addresses) => addresses.coll_surplus_pool)
+
+    entrypoint lqty_staking() = with_addresses((addresses) => addresses.lqty_staking)
+
+    entrypoint aeusd_token() = with_addresses((addresses) => addresses.aeusd_token)
+
+    // A doubly linked list of Troves, sorted by their collateral ratios
+    entrypoint sorted_troves() = with_addresses((addresses) => addresses.sorted_troves)
+
+    //------------------------------------------------------------------------------
+    // BORROWER TROVE OPERATIONS
+    //------------------------------------------------------------------------------
+
+    payable stateful entrypoint open_trove(
+          max_fee_percentage: int
+        , aeusd_amount: int
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.open_trove = with_addresses( (addresses) =>
+            /*let contracts_cache: contracts_cache = {*/
+                      /*trove_manager = addresses.trove_manager*/
+                    /*, active_pool = addresses.active_pool*/
+                    /*, aeusd_token = addresses.aeusd_token*/
+                    /*}*/
+            let vars: IBorrowerOperations.open_trove = {
+                      price = addresses.price_feed.fetch_price()
+                    , aeusd_fee = 0
+                    , net_debt = aeusd_amount
+                    , composite_debt = 0
+                    , icr = 0
+                    , nicr = 0
+                    , stake = 0
+                    , array_index = 0
+                    }
+
+            let is_recovery_mode: bool = check_recovery_mode(vars.price)
+
+            require_valid_max_fee_percentage(max_fee_percentage, is_recovery_mode)
+            require_troveis_not_active(addresses.trove_manager, Call.caller)
+
+            /*vars.AEUSDFee*/ //TODO: i don't know what exactly this supposed to do
+
+            let vars = if (is_recovery_mode) vars {
+                              aeusd_fee = trigger_borrowing_fee(aeusd_amount, max_fee_percentage)
+                            , net_debt @ p = SafeMath.add(p,vars.aeusd_fee)
+                            }
+                       else vars
+
+            require_at_least_min_net_debt(vars.net_debt)
+
+            // ICR is based on the composite debt, i.e. the requested AEUSD amount + AEUSD borrowing fee + AEUSD gas comp.
+            let vars = vars { composite_debt = get_composite_debt(vars.net_debt) }
+            require(vars.composite_debt > 0, "BorrowerOps: composite_debt should be greater then 0")
+
+            let vars = vars {  icr = LiquityMath.compute_cr(Call.value, vars.composite_debt, vars.price)
+                             , nicr = LiquityMath.compute_nominal_cr(Call.value, vars.composite_debt)
+                             }
+            if (is_recovery_mode)
+                require_icr_is_above_ccr(vars.icr)
+            else
+                require_icr_is_above_mcr(vars.icr)
+                // bools: coll increase, debt increase
+                let new_tcr = get_new_tcr_from_trove_change( Call.value, true, vars.composite_debt, true, vars.price)
+                require_new_tcr_is_above_ccr(new_tcr)
+
+            // Set the trove struct's properties
+            addresses.trove_manager.set_trove_status(Call.caller, 1)
+            addresses.trove_manager.increase_trove_coll(Call.caller, Call.value)
+            addresses.trove_manager.increase_trove_debt(Call.caller, vars.composite_debt)
+
+            addresses.trove_manager.update_trove_reward_snapshots(Call.caller)
+            let vars = vars { stake = addresses.trove_manager.update_stake_and_total_stakes(Call.caller) }
+
+            addresses.sorted_troves.insert(Call.caller, vars.nicr, upper_hint, lower_hint)
+            let vars = vars { array_index = addresses.trove_manager.add_trove_owner_to_array(Call.caller) }
+            Chain.event( TroveCreated(Call.caller, vars.array_index) )
+
+            // Move the ae to the Active Pool, and mint the aeusd_amount to the borrower
+            addresses.active_pool.receive_ae(value=Call.value)
+            withdraw_aeusd'(addresses.active_pool, addresses.aeusd_token, Call.caller, aeusd_amount, vars.net_debt)
+            // Move the AEUSD gas compensation to the Gas Pool
+            let gas_compensation = aeusd_gas_compensation()
+            withdraw_aeusd'(addresses.active_pool, addresses.aeusd_token, addresses.gas_pool, gas_compensation, gas_compensation)
+
+            Chain.event( TroveUpdated(Call.caller, Utils.xsToPayload'(
+                    [vars.composite_debt,Call.value,vars.stake],
+                    borrower_operation_to_str(OpenTrove)
+                )))
+            Chain.event(AEUSDBorrowingFeePaid(Call.caller, vars.aeusd_fee))
+            vars
+        )
+
+    // Send AE as collateral to a trove
+    payable stateful entrypoint add_coll( upper_hint: address , lower_hint: address): IBorrowerOperations.adjust_trove =
+        adjust_trove'(Call.caller, 0, 0, false, upper_hint, lower_hint, 0)
+
+    // Send AE as collateral to a trove. Called by only the Stability Pool.
+    payable stateful entrypoint move_ae_gain_to_trove(
+          borrower: address
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.adjust_trove =
+        require_caller_is_stability_pool()
+        adjust_trove'(borrower, 0, 0, false, upper_hint, lower_hint, 0)
+
+    // Withdraw AE collateral from a trove
+    payable stateful entrypoint withdraw_coll(
+          coll_withdrawal: int
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.adjust_trove =
+        adjust_trove'(Call.caller, coll_withdrawal, 0, false, upper_hint, lower_hint, 0)
+
+    // Withdraw AEUSD tokens from a trove: mint new AEUSD tokens to the owner, and increase the trove's debt accordingly
+    payable stateful entrypoint withdraw_aeusd(
+          max_fee_percentage: int
+        , aeusd_amount: int
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.adjust_trove =
+        adjust_trove'(Call.caller, 0, aeusd_amount, true, upper_hint, lower_hint, max_fee_percentage)
+
+    // Repay AEUSD tokens to a Trove: Burn the repaid AEUSD tokens, and reduce the trove's debt accordingly
+    payable stateful entrypoint repay_aeusd(
+          aeusd_amount: int
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.adjust_trove =
+        adjust_trove'(Call.caller, 0, aeusd_amount, false, upper_hint, lower_hint, 0)
+
+    payable stateful entrypoint adjust_trove(
+          max_fee_percentage: int
+        , coll_withdrawal: int
+        , aeusd_change: int
+        , is_debt_increase: bool
+        , upper_hint: address
+        , lower_hint: address
+        ): IBorrowerOperations.adjust_trove =
+        adjust_trove'( Call.caller
+                    , coll_withdrawal
+                    , aeusd_change
+                    , is_debt_increase
+                    , upper_hint
+                    , lower_hint
+                    , max_fee_percentage
+                    )
+
+
+    /*
+    * _adjustTrove(): Alongside a debt change, this function can perform either a collateral top-up or a collateral withdrawal.
+    *
+    * It therefore expects either a positive msg.value, or a positive _collWithdrawal argument.
+    *
+    * If both are positive, it will revert.
+    */
+    stateful function adjust_trove'(
+          borrower: address
+        , coll_withdrawal: int
+        , aeusd_change: int
+        , is_debt_increase: bool
+        , upper_hint: address
+        , lower_hint: address
+        , max_fee_percentage: int
+        ): IBorrowerOperations.adjust_trove = with_addresses( (addresses) =>
+            /*ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, aeusdToken)*/
+            /*LocalVariables_adjustTrove memory vars*/
+            let vars: IBorrowerOperations.adjust_trove = {
+                  price = addresses.price_feed.fetch_price()
+                , is_coll_increase = false
+                , coll_change = 0
+                , net_debt_change = 0
+                , debt = 0
+                , coll = 0
+                , old_icr = 0
+                , new_icr = 0
+                , new_tcr = 0
+                , aeusd_fee = 0
+                , new_debt = 0
+                , new_coll = 0
+                , stake = 0
+                }
+
+            let is_recovery_mode = check_recovery_mode(vars.price)
+
+            if (is_debt_increase)
+                require_valid_max_fee_percentage(max_fee_percentage, is_recovery_mode)
+                require_non_zero_debt_change(aeusd_change)
+
+            require_singular_coll_change(coll_withdrawal)
+            require_non_zero_adjustment(coll_withdrawal, aeusd_change)
+            require_troveis_active(addresses.trove_manager, borrower)
+
+            // Confirm the operation is either a borrower adjusting their own trove,
+            // or a pure AE transfer from the Stability Pool to a trove
+            require(
+                Call.caller == borrower ||
+                (Call.caller == addresses.stability_pool.address && Call.value > 0 && aeusd_change == 0),
+                "BorrowerOps: Operation is not adjusting owner's trove neither a pure AE transfer to a trove"
+                )
+
+            addresses.trove_manager.apply_pending_rewards(borrower)
+
+            // Get the collChange based on whether or not AE was sent in the transaction
+            let (coll_change, is_coll_increase) = get_coll_change(Call.value, coll_withdrawal)
+            let vars = vars { coll_change = coll_change
+                            , is_coll_increase = is_coll_increase
+                            , net_debt_change = aeusd_change
+                            }
+
+            // If the adjustment incorporates a debt increase and system is in Normal Mode, then trigger a borrowing fee
+            let vars =
+                if (is_debt_increase && !is_recovery_mode)
+                    vars { aeusd_fee = trigger_borrowing_fee(aeusd_change, max_fee_percentage)
+                         , net_debt_change @ p = SafeMath.add(p,vars.aeusd_fee)
+                         }
+                else vars
+
+            let vars = vars { debt = addresses.trove_manager.get_trove_debt(borrower)
+                            , coll = addresses.trove_manager.get_trove_coll(borrower)
+                            // Get the trove's old ICR before the adjustment, and what its new ICR will be after the adjustment
+                            , old_icr = LiquityMath.compute_cr(vars.coll, vars.debt, vars.price)
+                            , new_icr = get_new_icr_from_trove_change( vars.coll
+                                                                     , vars.debt
+                                                                     , vars.coll_change
+                                                                     , vars.is_coll_increase
+                                                                     , vars.net_debt_change
+                                                                     , is_debt_increase
+                                                                     , vars.price )
+                            }
+
+            require(coll_withdrawal =< vars.coll, "BorrowerOps: withdrawal should be less or equal with collateral")
+
+            // Check the adjustment satisfies all conditions for the current system mode
+            let vars = get_valid_adjustment_in_current_mode(is_recovery_mode, coll_withdrawal, is_debt_increase, vars)
+
+            // When the adjustment is a debt repayment, check it's a valid amount and that the caller has enough AEUSD
+            if (!is_debt_increase && aeusd_change > 0)
+                require_at_least_min_net_debt(SafeMath.sub(get_net_debt(vars.debt), vars.net_debt_change))
+                require_valid_aeusd_repayment(vars.debt, vars.net_debt_change)
+                require_sufficient_aeusd_balance(addresses.aeusd_token, borrower, vars.net_debt_change)
+
+            let (new_coll, new_debt) = update_trove_from_adjustment( addresses.trove_manager
+                                                                   , borrower
+                                                                   , vars.coll_change
+                                                                   , vars.is_coll_increase
+                                                                   , vars.net_debt_change
+                                                                   , is_debt_increase )
+            let vars = vars { new_coll = new_coll
+                            , new_debt = new_debt
+                            , stake = addresses.trove_manager.update_stake_and_total_stakes(borrower)
+                            }
+
+            // Re-insert trove in to the sorted list
+            let new_nicr = get_new_nominal_icr_from_trove_change( vars.coll, vars.debt, vars.coll_change, vars.is_coll_increase
+                                                                , vars.net_debt_change, is_debt_increase)
+            addresses.sorted_troves.re_insert(borrower, new_nicr, upper_hint, lower_hint)
+
+            Chain.event( TroveUpdated(borrower,Utils.xsToPayload'(
+                    [vars.new_debt, vars.new_coll, vars.stake],
+                    borrower_operation_to_str(AdjustTrove)
+                )))
+            Chain.event(AEUSDBorrowingFeePaid(Call.caller,  vars.aeusd_fee))
+
+            // Use the unmodified _AEUSDChange here, as we don't send the fee to the user
+            move_tokens_and_ae_from_adjustment(
+                addresses.active_pool,
+                addresses.aeusd_token,
+                Call.caller,
+                vars.coll_change,
+                vars.is_coll_increase,
+                aeusd_change,
+                is_debt_increase,
+                vars.net_debt_change )
+            vars
+        )
+
+    stateful entrypoint close_trove() = with_addresses( (addresses) =>
+        require_troveis_active(addresses.trove_manager, Call.caller)
+        let price = addresses.price_feed.fetch_price()
+        require_not_in_recovery_mode(price)
+
+        addresses.trove_manager.apply_pending_rewards(Call.caller)
+
+        let coll = addresses.trove_manager.get_trove_coll(Call.caller)
+        let debt = addresses.trove_manager.get_trove_debt(Call.caller)
+
+        require_sufficient_aeusd_balance(
+            addresses.aeusd_token
+            , Call.caller
+            , SafeMath.sub(debt,aeusd_gas_compensation())
+            )
+
+        let new_tcr = get_new_tcr_from_trove_change(coll, false, debt, false, price)
+        require_new_tcr_is_above_ccr(new_tcr)
+
+        addresses.trove_manager.remove_stake(Call.caller)
+        addresses.trove_manager.close_trove(Call.caller)
+
+        Chain.event(TroveUpdated(Call.caller, Utils.xsToPayload'(
+                [0, 0, 0],
+                borrower_operation_to_str(CloseTrove)
+            )))
+
+        // Burn the repaid AEUSD from the user's balance and the gas compensation from the Gas Pool
+        repay_aeusd'(
+              addresses.active_pool
+            , addresses.aeusd_token
+            , Call.caller
+            , SafeMath.sub(debt,aeusd_gas_compensation()))
+        repay_aeusd'(
+              addresses.active_pool
+            , addresses.aeusd_token
+            , addresses.gas_pool
+            , aeusd_gas_compensation())
+
+        // Send the collateral back to the user
+        addresses.active_pool.send_ae(Call.caller, coll) )
+
+    /**
+     * Claim remaining collateral from a redemption or from a liquidation with ICR > MCR in Recovery Mode
+     */
+    stateful entrypoint claim_collateral() = with_addresses( (addresses) =>
+        // send AE from CollSurplus Pool to owner
+        addresses.coll_surplus_pool.claim_coll(Call.caller) )
+
+    //------------------------------------------------------------------------------
+    // HELPER FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    // Issue the specified amount of AEUSD to account and increases
+    // the total active debt (_netDebtIncrease potentially includes a AEUSDFee)
+    function withdraw_aeusd'(
+          active_pool: IActivePool
+        , aeusd_token: IAEUSDToken
+        , account: address
+        , aeusd_amount: int
+        , net_debt_increase: int ) =
+        active_pool.increase_aeusd_debt(net_debt_increase)
+        aeusd_token.mint(account, aeusd_amount)
+
+    function trigger_borrowing_fee( aeusd_amount: int , max_fee_percentage: int ): int =
+        with_addresses( (addresses) =>
+            addresses.trove_manager.decay_base_rate_from_borrowing() // decay the baseRate state variable
+            let aeusd_fee = addresses.trove_manager.get_borrowing_fee(aeusd_amount)
+
+            require_user_accepts_fee(aeusd_fee, aeusd_amount, max_fee_percentage)
+
+            // Send fee to LQTY staking contract
+            addresses.lqty_staking.increase_f_aeusd(aeusd_fee)
+            addresses.aeusd_token.mint(addresses.lqty_staking.address, aeusd_fee)
+            aeusd_fee )
+
+    function get_usd_value(coll: int, price: int): int =
+        SafeMath.div( price * coll, Utils.decimal_precision())
+
+    function get_coll_change(
+        coll_received: int ,requested_coll_withdrawal: int
+        ): (int /* coll_change*/ * bool /*is_coll_increase*/) =
+            if (coll_received != 0)
+                (coll_received,true)
+            else
+               (requested_coll_withdrawal,false)
+
+    function update_trove_from_adjustment (
+          trove_manager: ITroveManager
+        , borrower: address
+        , coll_change: int
+        , is_coll_increase:  bool
+        , debt_change:  int
+        , is_debt_increase: bool
+        ): (int /*new_coll*/*int /*new_debt*/) =
+        let new_coll = if (is_coll_increase) trove_manager.increase_trove_coll(borrower, coll_change)
+                       else trove_manager.decrease_trove_coll(borrower, coll_change)
+        let new_debt = if (is_debt_increase) trove_manager.increase_trove_debt(borrower, debt_change)
+                       else trove_manager.decrease_trove_debt(borrower, debt_change)
+        (new_coll, new_debt)
+
+    payable stateful function move_tokens_and_ae_from_adjustment(
+          active_pool: IActivePool
+        , aeusd_token: IAEUSDToken
+        , borrower: address
+        , coll_change: int
+        , is_coll_increase: bool
+        , aeusd_change: int
+        , is_debt_increase: bool
+        , net_debt_change: int
+        ) =
+        if (is_debt_increase)
+            withdraw_aeusd'(active_pool, aeusd_token, borrower, aeusd_change, net_debt_change)
+        else
+            repay_aeusd'(active_pool, aeusd_token, borrower, aeusd_change)
+
+        if (is_coll_increase)
+            // Send AE to Active Pool and increase its recorded AE balance
+            active_pool.receive_ae(value=coll_change)
+        else
+            active_pool.send_ae(borrower, coll_change)
+
+    // Burn the specified amount of AEUSD from _account and decreases the total active debt
+    function repay_aeusd'(active_pool: IActivePool, aeusd_token: IAEUSDToken, account: address, aeusd: int) =
+        active_pool.decrease_aeusd_debt(aeusd)
+        aeusd_token.burn(account, aeusd)
+
+    //------------------------------------------------------------------------------
+    // CONSTRAINT FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    function require_valid_max_fee_percentage(max_fee_percentage: int , is_recovery_mode: bool) =
+        if (is_recovery_mode)
+            require(
+                max_fee_percentage =< Utils.decimal_precision(),
+                "Max fee percentage must less than or equal to 100%")
+        else
+            require(max_fee_percentage >= borrowing_fee_floor() && max_fee_percentage =< Utils.decimal_precision(),
+                "Max fee percentage must be between 0.5% and 100%")
+
+    function require_singular_coll_change(coll_withdrawal: int) =
+        require(Call.value == 0 || coll_withdrawal == 0, "BorrowerOperations: Cannot withdraw and add coll")
+
+    function require_caller_is_borrower(borrower: address) =
+        require(Call.caller == borrower, "BorrowerOps: Caller must be the borrower for a withdrawal")
+
+    function require_non_zero_adjustment(coll_withdrawal: int, aeusd_change: int) =
+        require(Call.value != 0 || coll_withdrawal != 0 || aeusd_change != 0,
+            "BorrowerOps: There must be either a collateral change or a debt change")
+
+    function require_troveis_active(trove_manager: ITroveManager, borrower: address) =
+        require(trove_manager.get_trove_status(borrower) == 1,
+            "BorrowerOps: Trove does not exist or is c losed")
+
+    function require_troveis_not_active(trove_manager: ITroveManager,borrower: address) =
+        require(trove_manager.get_trove_status(borrower) != 1, "BorrowerOps: Trove is active")
+
+    function require_non_zero_debt_change(aeusd_change: int) =
+        require(aeusd_change > 0, "BorrowerOps: Debt increase requires non-zero debtChange")
+
+    function require_not_in_recovery_mode(price: int) =
+        require(check_recovery_mode(price), "BorrowerOps: Operation not permitted during Recovery Mode")
+
+    function require_no_coll_withdrawal(coll_withdrawal: int) =
+        require(coll_withdrawal == 0, "BorrowerOps: Collateral withdrawal not permitted Recovery Mode")
+
+    //WARN: this modifies the vars, should be replaced after calling it
+    function get_valid_adjustment_in_current_mode (
+          is_recovery_mode: bool
+        , coll_withdrawal: int
+        , is_debt_increase: bool
+        , vars: IBorrowerOperations.adjust_trove ): IBorrowerOperations.adjust_trove =
+        /*
+        *In Recovery Mode, only allow:
+        *
+        * - Pure collateral top-up
+        * - Pure debt repayment
+        * - Collateral top-up with debt repayment
+        * - A debt increase combined with a collateral top-up which makes the ICR >= 150% and improves the ICR
+            (and by extension improves the TCR).
+        *
+        * In Normal Mode, ensure:
+        *
+        * - The new ICR is above MCR
+        * - The adjustment won't pull the TCR below CCR
+        */
+        if (is_recovery_mode)
+            require_no_coll_withdrawal(coll_withdrawal)
+            if (is_debt_increase)
+                require_icr_is_above_ccr(vars.new_icr)
+                require_new_icr_is_above_old_icr(vars.new_icr, vars.old_icr)
+            vars
+        else // if Normal Mode
+            require_icr_is_above_mcr(vars.new_icr)
+            let new_tcr = get_new_tcr_from_trove_change(vars.coll_change, vars.is_coll_increase,
+                    vars.net_debt_change, is_debt_increase, vars.price)
+            require_new_tcr_is_above_ccr(new_tcr)
+            vars { new_tcr = new_tcr }
+
+    function require_icr_is_above_mcr(new_icr: int) =
+        require(new_icr >= mcr(), "BorrowerOps: An operation that would result in ICR < MCR is not permitted")
+
+    function require_icr_is_above_ccr(new_icr: int) =
+        require(new_icr >= ccr(), "BorrowerOps: Operation must leave trove with ICR >= CCR")
+
+    function require_new_icr_is_above_old_icr(new_icr: int, old_icr: int) =
+        require(new_icr >= old_icr, "BorrowerOps: Cannot decrease your Trove's ICR in Recovery Mode")
+
+    function require_new_tcr_is_above_ccr(new_tcr: int) =
+        require(new_tcr >= ccr(), "BorrowerOps: An operation that would result in TCR < CCR is not permitted")
+
+    function require_at_least_min_net_debt(net_debt: int) =
+        require(net_debt >= min_net_debt(), "BorrowerOps: Trove's net debt must be greater than minimum")
+
+    function require_valid_aeusd_repayment(current_debt: int, debt_repayment: int ) =
+        require(debt_repayment =< SafeMath.sub(current_debt,aeusd_gas_compensation()),
+            "BorrowerOps: Amount repaid must not be larger than the Trove's debt")
+
+    function require_caller_is_stability_pool() = with_addresses( (addresses) =>
+            require(Call.caller == addresses.stability_pool.address, "BorrowerOps: Caller is not Stability Pool")
+        )
+
+    function require_sufficient_aeusd_balance(
+          aeusd_token: IAEUSDToken
+        , borrower: address
+        , debt_repayment: int
+        ) = require(Option.default(0,aeusd_token.balance(borrower)) >= debt_repayment,
+            "BorrowerOps: Caller doesnt have enough AEUSD to make repayment")
+
+    //------------------------------------------------------------------------------
+    // ICR and TCR getters
+    //------------------------------------------------------------------------------
+
+    // Compute the new collateral ratio, considering the change in coll and debt. Assumes 0 pending rewards.
+    function get_new_nominal_icr_from_trove_change (
+          coll: int
+        , debt: int
+        , coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool ): int =
+        let (new_coll, new_debt) = get_new_trove_amounts(coll, debt, coll_change, is_coll_increase
+                                                        , debt_change, is_debt_increase)
+        LiquityMath.compute_nominal_cr(new_coll, new_debt)
+
+    // Compute the new collateral ratio, considering the change in coll and debt. Assumes 0 pending rewards.
+    function get_new_icr_from_trove_change (
+        coll: int
+        , debt: int
+        , coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool
+        , price: int
+        ): int =
+        let (new_coll, new_debt) = get_new_trove_amounts(coll, debt, coll_change, is_coll_increase, debt_change, is_debt_increase)
+
+        LiquityMath.compute_cr(new_coll, new_debt, price)
+
+    function get_new_trove_amounts(
+          coll: int
+        , debt: int
+        , coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool ): (int*int) =
+        let new_debt = debt
+
+        let new_coll = if (is_coll_increase) SafeMath.add(coll,coll_change) else SafeMath.sub(coll,coll_change)
+        let new_debt = if (is_debt_increase) SafeMath.add(debt,debt_change) else SafeMath.sub(debt,debt_change)
+
+        (new_coll, new_debt)
+
+    function get_new_tcr_from_trove_change (
+          coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool
+        , price: int ): int =
+        let total_coll = get_entire_system_coll()
+        let total_debt = get_entire_system_debt()
+
+        let total_coll = if (is_coll_increase) SafeMath.add(total_coll,coll_change)
+                         else SafeMath.sub(total_coll,coll_change)
+        let total_debt = if (is_debt_increase) SafeMath.add(total_debt,debt_change)
+                         else SafeMath.sub(total_debt,debt_change)
+
+        LiquityMath.compute_cr(total_coll, total_debt, price)
+
+    //------------------------------------------------------------------------------
+    // OTHER FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    //------------------------------------------------------------------------------
+    // EVENTS
+    //------------------------------------------------------------------------------
+
+    datatype event
+        = TroveManagerAddressChanged(ITroveManager /*newTroveManagerAddress*/)
+        //TODO: will see if we implement this
+        /*| GasPoolAddressChanged(address _gasPoolAddress)*/
+        | CollSurplusPoolAddressChanged(ICollSurplusPool /*collSurplusPoolAddress*/)
+        | PriceFeedAddressChanged(IPriceFeed  /*newPriceFeedAddress*/)
+        | SortedTrovesAddressChanged(ISortedTroves /*sortedTrovesAddress*/)
+        | AEUSDTokenAddressChanged(IAEUSDToken /*aeusdTokenAddress*/)
+        | LQTYStakingAddressChanged(ILQTYStaking /*lqtyStakingAddress*/)
+        | GasPoolAddressChanged(address /*gasPoolAddress*/)
+
+        | TroveCreated(address /*indexed borrower*/, int /*uint arrayIndex*/)
+        | TroveUpdated(
+            address /*indexed _borrower*/
+            , string
+            /*
+            , borrower_operations
+            , uint _debt
+            , uint _coll
+            , uint stake
+            */
+        )
+        | AEUSDBorrowingFeePaid(address /*indexed _borrower*/, int /*_AEUSDFee*/)
+//#inject "./interfaces/IPool.events.aes"
+//#inject "./dependencies/Ownable.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+
+//#inject "./dependencies/Ownable.functions.aes"
+//#inject "./dependencies/LiquityBase.functions.aes"

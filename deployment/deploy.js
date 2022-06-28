@@ -91,10 +91,19 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 00 */ () => deployContract( './contracts/BuildAll.aes',
                 [],
             ),
+            /* 01 */ () => deployContract( './contracts/BorrowerOperations.aes',
+                [],
+            ),
+            /* 02 */ () => deployContract( './contracts/ActivePool.aes',
+                [],
+            ),
+            /* 03 */ () => deployContract( './contracts/SortedTroves.aes',
+                [],
+            ),
         ]
     try {
         //for ( const dep of deployments ) { await dep() }
-        await deployments[0]()
+        await deployments[3]()
     } catch ( ex ) {
         //empty
     }
