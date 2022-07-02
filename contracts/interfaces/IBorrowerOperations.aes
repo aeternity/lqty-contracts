@@ -33,6 +33,32 @@ contract interface IBorrowerOperations =
 
     /*datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove*/
 
+    record adjust_trove = {
+          price: int
+        , is_coll_increase: bool
+        , coll_change: int
+        , net_debt_change: int
+        , debt: int
+        , coll: int
+        , old_icr: int
+        , new_icr: int
+        , new_tcr: int
+        , aeusd_fee: int
+        , new_debt: int
+        , new_coll: int
+        , stake: int
+        }
+
+    record open_trove = {
+          price: int
+        , aeusd_fee: int
+        , net_debt: int
+        , composite_debt: int
+        , icr: int
+        , nicr: int
+        , stake: int
+        , array_index: int
+        }
 
 
     //TODO: all these should be casted to proper interfaces
