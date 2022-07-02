@@ -49,7 +49,7 @@ contract interface IBorrowerOperations =
         , ILQTYStaking
         ) => unit
 
-    stateful entrypoint open_trove: (
+    payable stateful entrypoint open_trove: (
           int     //maxFee
         , int     //AEUSDAmount
         , address //upperHint

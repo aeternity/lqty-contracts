@@ -83,7 +83,7 @@ contract ActivePool =
 
     // -- FUNCTIONS
     function withAddresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
-        None => abort("no addresses")
+        None => abort("ActivePool: no addresses")
         Some(addresses) => f(addresses)
 
     function require_caller_is_bo_or_trovem_or_sp() =
@@ -94,7 +94,7 @@ contract ActivePool =
                     sender == addresses.borrower_operations.address||
                     sender == addresses.trove_manager.address ||
                     sender == addresses.stability_pool.address,
-                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
+                    "ActivePool: Call is neither BorrowerOperations nor TroveManager nor StabilityPool"
                     )
             )
 
@@ -105,15 +105,21 @@ contract ActivePool =
                 require (
                     sender == addresses.borrower_operations.address||
                     sender == addresses.trove_manager.address,
-                    "ActivePool: Caller is neither BorrowerOperations nor TroveManager"
+                    "ActivePool: Call is neither BorrowerOperations nor TroveManager"
                     )
              )
-    //TODO: how do we do it in Sophia??!?!
-    /*receive() external payable {*/
-        /*_requireCallerIsBorrowerOperationsOrDefaultPool();*/
-        /*ETH = ETH.add(msg.value);*/
-        /*emit ActivePoolETHBalanceUpdated(ETH);*/
-    /*}*/
+
+    function require_caller_is_borrower_operations_or_default_pool() = withAddresses( (addresses) =>
+            require(
+                Call.caller == addresses.borrower_operations.address ||
+                Call.caller == addresses.default_pool.address ,
+                "ActivePool: Call is neither BO nor Default Pool")
+        )
+
+    payable stateful entrypoint receive_ae() =
+        require_caller_is_borrower_operations_or_default_pool()
+        put( state { ae @ p = p + Call.value } )
+        Chain.event( ActivePoolAEBalanceUpdated(state.ae) )
 
     datatype event
         = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)

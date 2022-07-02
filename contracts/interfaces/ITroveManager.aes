@@ -118,7 +118,7 @@ contract interface ITroveManager =
 
     stateful entrypoint decay_base_rate_from_borrowing: () => unit
 
-    entrypoint get_trove_status: (address /*_borrower*/) => unit
+    entrypoint get_trove_status: (address /*_borrower*/) => int
 
     entrypoint get_trove_stake: (address /*_borrower*/) => int
 

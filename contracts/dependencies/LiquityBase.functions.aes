@@ -61,6 +61,6 @@
     function check_recovery_mode(price: int): bool =
         get_tcr(price) < ccr()
 
-    function require_userAccepts_fee(fee: int, amount: int,max_fee_percentage: int) =
+    function require_user_accepts_fee(fee: int, amount: int,max_fee_percentage: int) =
         let fee_percentage = SafeMath.div(fee * Utils.decimal_precision(),amount)
         require(fee_percentage =< max_fee_percentage, "Fee exceeded provided maximum")
