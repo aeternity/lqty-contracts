@@ -23,14 +23,14 @@
 
     entrypoint borrowing_fee_floor() = Utils.decimal_precision() / 1000 * 5 // 0.5%
 
-    function withAddresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
         None => abort("no addresses")
         Some(addresses) => f(addresses)
 
     //// --- Gas compensation functions ---
 
     // Returns the composite debt (drawn debt + gas compensation) of a trove, for the purpose of ICR calculation
-    function get_composite_debt(debt: int) =
+    entrypoint get_composite_debt(debt: int) =
         SafeMath.add(debt,aeusd_gas_compensation())
 
     function get_net_debt(debt: int) =
@@ -40,13 +40,13 @@
     function get_coll_gas_compensation(entire_coll: int) =
         SafeMath.div(entire_coll,percent_divisor())
 
-    entrypoint get_entire_system_coll(): int /*entireSystemColl*/ = withAddresses((addresses) =>
+    entrypoint get_entire_system_coll(): int /*entireSystemColl*/ = with_addresses((addresses) =>
             let active_coll = addresses.active_pool.get_ae()
             let liquidated_coll = addresses.default_pool.get_ae()
             SafeMath.add(active_coll,liquidated_coll)
         )
 
-    entrypoint get_entire_system_debt(): int /*entireSystemDebt*/ = withAddresses((addresses) =>
+    entrypoint get_entire_system_debt(): int /*entireSystemDebt*/ = with_addresses((addresses) =>
             let active_coll = addresses.active_pool.get_ae()
             let closed_debt = addresses.default_pool.get_aeusd_debt()
             SafeMath.add(active_coll,closed_debt)

@@ -12,27 +12,6 @@ include "./ILQTYStaking.aes"
 
 // Common interface for the Trove Manager.
 contract interface IBorrowerOperations =
-    // --- Events ---
-
-    //event TroveManagerAddressChanged(address _newTroveManagerAddress)
-    //event ActivePoolAddressChanged(address _activePoolAddress)
-    //event DefaultPoolAddressChanged(address _defaultPoolAddress)
-    //event StabilityPoolAddressChanged(address _stabilityPoolAddress)
-    //event GasPoolAddressChanged(address _gasPoolAddress)
-    //event CollSurplusPoolAddressChanged(address _collSurplusPoolAddress)
-    //event PriceFeedAddressChanged(address  _newPriceFeedAddress)
-    //event SortedTrovesAddressChanged(address _sortedTrovesAddress)
-    //event AEUSDTokenAddressChanged(address _lusdTokenAddress)
-    //event LQTYStakingAddressChanged(address _lqtyStakingAddress)
-
-    //event TroveCreated(address indexed _borrower, int arrayIndex)
-    //event TroveUpdated(address indexed _borrower, int _debt, int _coll, int stake, int8 operation)
-    //event AEUSDBorrowingFeePaid(address indexed _borrower, int _AEUSDFee)
-
-    // --- Functions ---
-
-    /*datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove*/
-
     record adjust_trove = {
           price: int
         , is_coll_increase: bool
@@ -61,7 +40,6 @@ contract interface IBorrowerOperations =
         }
 
 
-    //TODO: all these should be casted to proper interfaces
     stateful entrypoint set_addresses: (
           ITroveManager
         , IActivePool
@@ -80,39 +58,37 @@ contract interface IBorrowerOperations =
         , int     //AEUSDAmount
         , address //upperHint
         , address //lowerHint
-        ) => unit
+        ) => open_trove
 
     stateful entrypoint add_coll: (
           address //upperHint
         , address //lowerHint
-        ) => unit
+        ) => adjust_trove
 
     stateful entrypoint move_ae_gain_to_trove: (
           address //_user
         , address //upperHint
         , address //lowerHint
-        ) => unit
+        ) => adjust_trove
 
     stateful entrypoint withdraw_coll: (
           int     //amount
         , address //upperHint
         , address //lowerHint
-        ) => unit
+        ) => adjust_trove
 
     stateful entrypoint withdraw_aeusd: (
           int     //maxFee
         , int     //amount
         , address //upperHint
         , address //lowerHint
-        ) => unit
+        ) => adjust_trove
 
     stateful entrypoint repay_aeusd: (
           int     //_amount
         , address //upperHint
         , address //lowerHint
-        ) => unit
-
-    stateful entrypoint close_trove: () => unit
+        ) => adjust_trove
 
     stateful entrypoint adjust_trove: (
           int       //maxFee
@@ -121,7 +97,9 @@ contract interface IBorrowerOperations =
         , bool      //sDebtIncrease
         , address   //upperHint
         , address   //lowerHint
-        ) => unit
+        ) => adjust_trove
+
+    stateful entrypoint close_trove: () => unit
 
     stateful entrypoint claim_collateral:() => unit
 

@@ -60,7 +60,7 @@ contract BorrowerOperations =
         borrower_operation_to_str(AdjustTrove) = "adjust"
 
     //------------------------------------------------------------------------------
-    // ENTRYPOINTS
+    // INIT ENTRYPOINTS
     //------------------------------------------------------------------------------
 
     entrypoint init()=
@@ -88,6 +88,27 @@ contract BorrowerOperations =
 
         renounce_ownership()
 
+    //------------------------------------------------------------------------------
+    // DATA GETTERS
+    //------------------------------------------------------------------------------
+
+    entrypoint name() = "BorrowerOperations"
+
+    // --- Connected contract declarations ---
+    entrypoint trove_manager() = with_addresses((addresses) => addresses.trove_manager)
+
+    entrypoint stability_pool() = with_addresses((addresses) => addresses.stability_pool)
+
+    entrypoint gas_pool() = with_addresses((addresses) => addresses.gas_pool)
+
+    entrypoint coll_surplus_pool() = with_addresses((addresses) => addresses.coll_surplus_pool)
+
+    entrypoint lqty_staking() = with_addresses((addresses) => addresses.lqty_staking)
+
+    entrypoint aeusd_token() = with_addresses((addresses) => addresses.aeusd_token)
+
+    // A doubly linked list of Troves, sorted by their collateral ratios
+    entrypoint sorted_troves() = with_addresses((addresses) => addresses.sorted_troves)
 
     //------------------------------------------------------------------------------
     // BORROWER TROVE OPERATIONS
@@ -98,7 +119,7 @@ contract BorrowerOperations =
         , aeusd_amount: int
         , upper_hint: address
         , lower_hint: address
-        ): IBorrowerOperations.open_trove = withAddresses( (addresses) =>
+        ): IBorrowerOperations.open_trove = with_addresses( (addresses) =>
             /*let contracts_cache: contracts_cache = {*/
                       /*trove_manager = addresses.trove_manager*/
                     /*, active_pool = addresses.active_pool*/
@@ -227,6 +248,7 @@ contract BorrowerOperations =
                     , max_fee_percentage
                     )
 
+
     /*
     * _adjustTrove(): Alongside a debt change, this function can perform either a collateral top-up or a collateral withdrawal.
     *
@@ -242,7 +264,7 @@ contract BorrowerOperations =
         , upper_hint: address
         , lower_hint: address
         , max_fee_percentage: int
-        ) = withAddresses( (addresses) =>
+        ): IBorrowerOperations.adjust_trove = with_addresses( (addresses) =>
             /*ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, aeusdToken)*/
             /*LocalVariables_adjustTrove memory vars*/
             let vars: IBorrowerOperations.adjust_trove = {
@@ -355,6 +377,55 @@ contract BorrowerOperations =
             vars
         )
 
+    stateful entrypoint close_trove() = with_addresses( (addresses) =>
+        require_troveis_active(addresses.trove_manager, Call.caller)
+        let price = addresses.price_feed.fetch_price()
+        require_not_in_recovery_mode(price)
+
+        addresses.trove_manager.apply_pending_rewards(Call.caller)
+
+        let coll = addresses.trove_manager.get_trove_coll(Call.caller)
+        let debt = addresses.trove_manager.get_trove_debt(Call.caller)
+
+        require_sufficient_aeusd_balance(
+            addresses.aeusd_token
+            , Call.caller
+            , SafeMath.sub(debt,aeusd_gas_compensation())
+            )
+
+        let new_tcr = get_new_tcr_from_trove_change(coll, false, debt, false, price)
+        require_new_tcr_is_above_ccr(new_tcr)
+
+        addresses.trove_manager.remove_stake(Call.caller)
+        addresses.trove_manager.close_trove(Call.caller)
+
+        Chain.event(TroveUpdated(Call.caller, Utils.xsToPayload'(
+                [0, 0, 0],
+                borrower_operation_to_str(CloseTrove)
+            )))
+
+        // Burn the repaid AEUSD from the user's balance and the gas compensation from the Gas Pool
+        repay_aeusd'(
+              addresses.active_pool
+            , addresses.aeusd_token
+            , Call.caller
+            , SafeMath.sub(debt,aeusd_gas_compensation()))
+        repay_aeusd'(
+              addresses.active_pool
+            , addresses.aeusd_token
+            , addresses.gas_pool
+            , aeusd_gas_compensation())
+
+        // Send the collateral back to the user
+        addresses.active_pool.send_ae(Call.caller, coll) )
+
+    /**
+     * Claim remaining collateral from a redemption or from a liquidation with ICR > MCR in Recovery Mode
+     */
+    stateful entrypoint claim_collateral() = with_addresses( (addresses) =>
+        // send AE from CollSurplus Pool to owner
+        addresses.coll_surplus_pool.claim_coll(Call.caller) )
+
     //------------------------------------------------------------------------------
     // HELPER FUNCTIONS
     //------------------------------------------------------------------------------
@@ -371,7 +442,7 @@ contract BorrowerOperations =
         aeusd_token.mint(account, aeusd_amount)
 
     function trigger_borrowing_fee( aeusd_amount: int , max_fee_percentage: int ): int =
-        withAddresses( (addresses) =>
+        with_addresses( (addresses) =>
             addresses.trove_manager.decay_base_rate_from_borrowing() // decay the baseRate state variable
             let aeusd_fee = addresses.trove_manager.get_borrowing_fee(aeusd_amount)
 
@@ -524,7 +595,7 @@ contract BorrowerOperations =
         require(debt_repayment =< SafeMath.sub(current_debt,aeusd_gas_compensation()),
             "BorrowerOps: Amount repaid must not be larger than the Trove's debt")
 
-    function require_caller_is_stability_pool() = withAddresses( (addresses) =>
+    function require_caller_is_stability_pool() = with_addresses( (addresses) =>
             require(Call.caller == addresses.stability_pool.address, "BorrowerOps: Caller is not Stability Pool")
         )
 

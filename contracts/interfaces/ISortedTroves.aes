@@ -1,4 +1,7 @@
 // Common interface for the SortedTroves Doubly Linked List.
+/*include "./ITroveManager.aes"*/
+/*include "./IBorrowerOperations.aes"*/
+
 contract interface ISortedTroves =
 
     // --- Events ---
@@ -10,11 +13,12 @@ contract interface ISortedTroves =
 
     // --- Functions ---
 
-    stateful entrypoint set_params: (
-          int       // uint256 _size,
-        , address   // TroveManagerAddress,
-        , address   // borrowerOperationsAddress,
-        ) => unit
+    //TODO: this will create circular reference with IBorrowerOperations
+    /*stateful entrypoint set_params: (*/
+          /*int       // uint256 _size,*/
+        /*, address   // TroveManagerAddress,*/
+        /*, address   // borrowerOperationsAddress,*/
+        /*) => unit*/
 
     stateful entrypoint insert: (
           address // id

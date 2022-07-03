@@ -1,0 +1,63 @@
+@compiler >= 6
+
+include "Option.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITroveManager.aes"
+include "./dependencies/Utils.aes"
+
+contract SortedTroves =
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    // Information for a node in the list
+    record node = {
+          exists: bool
+        , nextId: address                  // Id of next node (smaller NICR) in the list
+        , prevId: address                  // Id of previous node (larger NICR) in the list
+        }
+
+    // Information for the list
+    record data = {
+          head: address                    // Head of the list. Also the node in the list with the largest NICR
+        , tail: address                    // Tail of the list. Also the node in the list with the smallest NICR
+        , max_size: int                    // Maximum size of the list
+        , size: int                        // Current size of the list
+        , nodes: map(address,node)         // Track the corresponding ids for each node in the list
+        }
+
+    record addresses = {
+          borrower_operations: IBorrowerOperations
+        , trove_manager: ITroveManager
+        }
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+        , size: int
+        , data: data
+        }
+
+    entrypoint init()=
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        { owner = Some(Call.caller)
+         , addresses = None
+         , size = 0
+         }
+    //------------------------------------------------------------------------------
+    // EVENTS
+    //------------------------------------------------------------------------------
+
+    datatype event
+        = TroveManagerAddressChanged(ITroveManager /*newTroveManagerAddress*/)
+        //TODO: will see if we implement this
+        | BorrowerOperationsAddressChanged(IBorrowerOperations /*borrowerOperationsAddress*/)
+        | NodeAdded(address /*id*/, int /*nicr*/)
+        | NodeRemoved(address /*id*/)
+//#inject "./dependencies/Ownable.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+
+//#inject "./dependencies/Ownable.functions.aes"
+
