@@ -46,13 +46,13 @@ contract interface ISortedTroves =
 
     entrypoint get_max_size: () => int
 
-    entrypoint get_first: () => address
+    entrypoint get_first: () => option(address)
 
-    entrypoint get_last: () => address
+    entrypoint get_last: () => option(address)
 
-    entrypoint get_next: (address /*_id*/) => address
+    entrypoint get_next: (address /*_id*/) => option(address)
 
-    entrypoint get_prev: (address /*_id*/) => address
+    entrypoint get_prev: (address /*_id*/) => option(address)
 
     entrypoint valid_insert_position: (
         address   // uint256 _ICR

@@ -12,16 +12,16 @@ contract SortedTroves =
 
     // Information for a node in the list
     record node = {
-          exists: bool
-        , nextId: address                  // Id of next node (smaller NICR) in the list
-        , prevId: address                  // Id of previous node (larger NICR) in the list
+          next_id: option(address)         // Id of next node (smaller NICR) in the list
+        , prev_id: option(address)         // Id of previous node (larger NICR) in the list
         }
 
     // Information for the list
     record data = {
-          head: address                    // Head of the list. Also the node in the list with the largest NICR
-        , tail: address                    // Tail of the list. Also the node in the list with the smallest NICR
+          head: option(address)            // Head of the list. Also the node in the list with the largest NICR
+        , tail: option(address)            // Tail of the list. Also the node in the list with the smallest NICR
         , max_size: int                    // Maximum size of the list
+        //TODO: if Map.size isn't too costly remove this
         , size: int                        // Current size of the list
         , nodes: map(address,node)         // Track the corresponding ids for each node in the list
         }
@@ -39,10 +39,338 @@ contract SortedTroves =
 
     entrypoint init()=
         Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
-        { owner = Some(Call.caller)
+        { owner      = Some(Call.caller)
          , addresses = None
-         , size = 0
-         }
+         , size      = 0
+         , data      = {
+              head  = None
+            , tail  = None
+            , size  = 0
+            , max_size = 0
+            , nodes = {}
+            }
+          }
+    stateful entrypoint set_params(size: int, trove_manager: ITroveManager, borrower_operations: IBorrowerOperations) =
+        only_owner()
+
+        require(size > 0, "SortedTroves: Size can’t be zero")
+        put(state{ data @ p = p { max_size = size }
+                 , addresses = Some({
+                      trove_manager = trove_manager
+                    , borrower_operations = borrower_operations
+                    })
+                 })
+
+        Chain.event(TroveManagerAddressChanged(trove_manager))
+        Chain.event(BorrowerOperationsAddressChanged(borrower_operations))
+
+        renounce_ownership()
+    //------------------------------------------------------------------------------
+    // ENTRYPOINTS
+    //------------------------------------------------------------------------------
+    /*
+     * @dev Add a node to the list
+     * @param _id Node's id
+     * @param _NICR Node's NICR
+     * @param _prevId Id of previous node for the insert position
+     * @param _nextId Id of next node for the insert position
+     */
+
+    stateful entrypoint insert(
+          id: address
+        , nicr: int
+        , prev_id_opt: option(address)
+        , next_id_opt: option(address)
+        ) =
+        require_caller_is_bo_or_trove_manager()
+        insert'(id,nicr,prev_id_opt,next_id_opt)
+
+    stateful function insert'(
+          id: address
+        , nicr: int
+        , prev_id_opt: option(address)
+        , next_id_opt: option(address)
+        ) =
+        // List must not be full
+        require(!is_full(), "SortedTroves: List is full")
+        // List must not already contain node
+        require(!contains(id), "SortedTroves: List already contains the node")
+        // NICR must be non-zero
+        require(nicr > 0, "SortedTroves: NICR must be positive")
+
+        let (prev_id_opt,next_id_opt) =
+          if(!valid_insert_position(nicr,prev_id_opt,next_id_opt)) find_insert_position(nicr,prev_id_opt,next_id_opt)
+          else (prev_id_opt,next_id_opt)
+        switch((prev_id_opt,next_id_opt,state.data.head,state.data.tail))
+          // Insert as head and tail
+          (None,None,_,_) =>
+            put(state{data @ p = p {
+                          head = Some(id)
+                        , tail = Some(id)
+                        , nodes = Map.from_list([(id,{prev_id = None, next_id = None})]) }})
+          // Insert before `prevId` as the head
+          (None,Some(next_id),None,_) => abort("head is null")
+          (None,Some(next_id),Some(head),_) =>
+            put(state{data @ p = p {
+                          nodes @ x = x { [id] = {prev_id = None, next_id = Some(head) }
+                                        , [head] @ h = h { prev_id = Some(id)}
+                                        }
+                        , head = Some(id)
+                     }})
+          // Insert after `nextId` as the tail
+          (Some(prev_id),None,_,None) => abort("tail is null")
+          (Some(prev_id),None,_,Some(tail)) =>
+            put(state{data @ p = p {
+                          nodes @ x = x { [id] = {prev_id = Some(tail), next_id = None }
+                                        , [tail] @ h = h { next_id = Some(id)}
+                                        }
+                        , tail = Some(id)
+                     }})
+          // Insert at insert position between `prevId` and `nextId`
+          (Some(prev_id),Some(next_id),_,_) =>
+            put(state{data @ p = p {
+                          nodes @ x = x { [id] = {prev_id = Some(prev_id), next_id = Some(next_id) }
+                                        , [prev_id] @ b = b { next_id = Some(id)}
+                                        , [next_id] @ b = b { prev_id = Some(id)}
+                                        }
+                        , tail = Some(id)
+                     }})
+        //increase size
+        put(state{ data @ d = d { size @ s = s + 1 }})
+
+        Chain.event(NodeAdded( id, nicr))
+
+    /*
+     * @dev Remove a node from the list
+     * @param id Node's id
+     */
+    stateful entrypoint remove(id: address) =
+        require_caller_is_trove_manager()
+        remove'(id)
+
+    stateful function remove'(id: address) =
+      require(contains(id), "SortedTroves: List does not contain the id")
+      if(state.size > 1)
+        // List contains more than a single node
+        let head_opt = state.data.head
+        if(Some(id) == head_opt)
+          // The removed node is the head
+          let new_head_id: address = Option.force(Option.force(Map.lookup(id,state.data.nodes)).next_id)
+          put(state{ data @ d = d {
+                  // Set head to next node
+                  head = Some(new_head_id)
+                  // Set prev pointer of new head to None
+                , nodes @ n = n { [new_head_id] @ h = h { prev_id = None } }
+              }})
+        else
+          if(Some(id) == state.data.tail)
+           // The removed node is the tail
+           let new_tail_id: address = Option.force(Option.force(Map.lookup(id,state.data.nodes)).prev_id)
+           put(state{ data @ d = d {
+                 // Set tail to previous node
+                 tail = Some(new_tail_id)
+                 /*// Set next pointer of new tail to null*/
+               , nodes @ n = n { [new_tail_id] @ h = h { next_id = None } }
+             }})
+          else
+            // The removed node is neither the head nor the tail
+            let node = Option.force(Map.lookup(id,state.data.nodes))
+            let prev_id: address = Option.force(node.prev_id)
+            let next_id: address = Option.force(node.next_id)
+            put(state{ data @ d = d {
+               // Set next pointer of previous node to the next node
+               nodes @ n = n { [prev_id] @ h = h { next_id = node.next_id }
+               // Set prev pointer of next node to the previous node
+                             , [next_id] @ h = h { prev_id = node.prev_id }
+                             }
+             }})
+      else
+        // List contains a single node
+        // Set the head and tail to null
+        put(state{ data @ d = d { head = None, tail = None }})
+      // remove the node and decrease the size
+      put(state{ data @ d = d {
+            nodes @ n = Map.delete(id,n)
+          , size @ s = s - 1
+        }})
+      Chain.event(NodeRemoved(id))
+
+    /*
+     * @dev Re-insert the node at a new position, based on its new NICR
+     * @param _id Node's id
+     * @param _newNICR Node's new NICR
+     * @param _prevId Id of previous node for the new insert position
+     * @param _nextId Id of next node for the new insert position
+     */
+    stateful entrypoint re_insert(id: address, new_nicr: int, prev_id: option(address), next_id: option(address)) =
+        require_caller_is_bo_or_trove_manager()
+        // List must contain the node
+        require(contains(id), "SortedTroves: List does not contain the id")
+        // NICR must be non-zero
+        require(new_nicr > 0, "SortedTroves: NICR must be positive")
+
+        // Remove node from the list
+        remove'(id)
+
+        insert'(id, new_nicr, prev_id, next_id)
+
+    /*
+     * @dev Check if a pair of nodes is a valid insertion point for a new node with the given NICR
+     * @param nicr Node's NICR
+     * @param prev_id Id of previous node for the insert position
+     * @param next_id Id of next node for the insert position
+     */
+    entrypoint
+      valid_insert_position: (int, option(address), option(address)) => bool
+      // is a valid insert position if the list is empty
+      valid_insert_position(_,None,None) = is_empty()
+      // is a valid insert position if `next_id` is the head of the list
+      valid_insert_position(nicr,None,Some(next_id)) = with_addresses((addresses) =>
+          state.data.head == Some(next_id) && nicr >= addresses.trove_manager.get_nominal_icr(next_id)
+        )
+      // is a valid insert position if `prev_id` is the tail of the list
+      valid_insert_position(nicr,Some(prev_id),None) = with_addresses((addresses) =>
+          state.data.tail == Some(prev_id) && nicr =< addresses.trove_manager.get_nominal_icr(prev_id)
+        )
+      // is a valid insert position if they are adjacent nodes and `_NICR` falls between the two nodes' NICRs
+      valid_insert_position(nicr,Some(prev_id),Some(next_id)) = with_addresses((addresses) =>
+          switch(Map.lookup(prev_id,state.data.nodes))
+            None => false
+            Some(node) => node.next_id == Some(next_id) &&
+              addresses.trove_manager.get_nominal_icr(prev_id) >= nicr &&
+              nicr >= addresses.trove_manager.get_nominal_icr(next_id)
+
+        )
+
+    function
+      find_insert_position: (int, option(address), option(address)) => (option(address)*option(address))
+      find_insert_position(nicr,prev_id_opt,next_id_opt) = with_addresses((addresses) =>
+          let prev_id_opt =  switch(prev_id_opt)
+            /*// `prevId` does not exist anymore or now has a smaller NICR than the given NICR*/
+            Some(prev_id) | !contains(prev_id) || nicr > addresses.trove_manager.get_nominal_icr(prev_id) => None
+            _ => prev_id_opt
+
+          let next_id_opt = switch(next_id_opt)
+            // `nextId` does not exist anymore or now has a larger NICR than the given NICR
+            Some(next_id) | !contains(next_id) || nicr < addresses.trove_manager.get_nominal_icr(next_id) => None
+            _ => next_id_opt
+
+          switch((prev_id_opt,next_id_opt))
+            // No hint - descend list starting from head
+            (None,None) => descend_list(nicr,state.data.head)
+            // No `prevId` for hint - ascend list starting from `nextId`
+            (None,_) => ascend_list( nicr, next_id_opt)
+            // No `nextId` for hint - descend list starting from `prevId`
+            (_,None) => descend_list(nicr, prev_id_opt)
+            // Descend list starting from `prevId`
+            _ => descend_list(nicr,prev_id_opt)
+        )
+
+    entrypoint get_size(): int = state.data.size
+
+    entrypoint get_max_size (): int = state.data.max_size
+
+    entrypoint get_first(): option(address) = state.data.head
+
+    entrypoint get_last (): option(address) = state.data.tail
+
+    entrypoint get_next(id: address): option(address) = get_node(id).next_id
+
+    entrypoint get_prev(id: address): option(address) = get_node(id).prev_id
+
+    /*
+     * @dev Checks if the list is full
+     */
+    entrypoint is_full() : bool = state.data.size == state.data.max_size
+
+    /*
+     * @dev Checks if the list is empty
+     */
+    entrypoint is_empty() = state.data.size == 0
+
+    entrypoint contains(id: address): bool = Map.member(id,state.data.nodes)
+
+    //------------------------------------------------------------------------------
+    // UTILS
+    //------------------------------------------------------------------------------
+
+    function get_node(id: address): node = Map.lookup_default(id,state.data.nodes,null_node())
+
+    function require_caller_is_trove_manager() = with_addresses((addresses) =>
+        require(Call.caller == addresses.trove_manager.address, "SortedTroves: Caller is not the TroveManager")
+      )
+    function require_caller_is_bo_or_trove_manager() = with_addresses((addresses) =>
+        require(Call.caller == addresses.borrower_operations.address || Call.caller == addresses.trove_manager.address,
+            "SortedTroves: Caller is neither BO nor TroveM" )
+      )
+
+    function null_node(): node = {prev_id = None , next_id = None}
+    /*
+     * @dev Ascend the list (smaller NICRs to larger NICRs) to find a valid insert position
+     * @param _troveManager TroveManager contract, passed in as param to save SLOAD’s
+     * @param _NICR Node's NICR
+     * @param _startId Id of node to start ascending the list from
+     */
+    function ascend_list(nicr: int, start_id: option(address)): (option(address)*option(address)) = with_addresses((addresses) =>
+        if(state.data.tail == start_id && Option.match(true, (id) => nicr =< addresses.trove_manager.get_nominal_icr(id),start_id))
+            (start_id,None)
+        else
+          let next_id = start_id
+          let prev_id = switch(next_id)
+                None => None
+                Some(x) => switch(Map.lookup(x,state.data.nodes))
+                  None => None
+                  Some(node) => node.prev_id
+          loop_for_ascend(nicr,prev_id,next_id)
+     )
+
+    function
+      /*// Descend the list until we reach the end or until we find a valid insert position*/
+      loop_for_ascend: (int,option(address),option(address)) => (option(address)*option(address))
+      loop_for_ascend(_,prev_id,None) = (prev_id,None)
+      loop_for_ascend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
+      loop_for_ascend(nicr,prev_id,Some(next_id)) =
+          //get the next_id node's prev_id
+          let prev_id = Map.lookup_default(next_id,state.data.nodes,null_node()).prev_id
+          //and loop again
+          loop_for_descend(nicr,prev_id,prev_id)
+    /*
+     * @dev Descend the list (larger NICRs to smaller NICRs) to find a valid insert position
+     * @param _troveManager TroveManager contract, passed in as param to save SLOAD’s
+     * @param _NICR Node's NICR
+     * @param _startId Id of node to start descending the list from
+     */
+    function descend_list(nicr: int, start_id: option(address)): (option(address) * option(address)) = with_addresses((addresses) =>
+        // If `_startId` is the head, check if the insert position is before the head
+        //TODO: please test and recheck with solidity if this Option.match(true...) is the right condition
+        if (state.data.head == start_id && Option.match( true, (id) => nicr >= addresses.trove_manager.get_nominal_icr(id), start_id ))
+            (None, start_id)
+        else
+          let prev_id = start_id
+          let next_id = switch(prev_id)
+                        None => None
+                        Some(x) => switch(Map.lookup(x,state.data.nodes))
+                          None => None
+                          Some(node) => node.next_id
+          loop_for_descend(nicr,prev_id,next_id)
+      )
+
+    function
+      /*// Descend the list until we reach the end or until we find a valid insert position*/
+      loop_for_descend: (int,option(address),option(address)) => (option(address)*option(address))
+      loop_for_descend(_,None,next_id) = (None,next_id)
+      loop_for_descend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
+      loop_for_descend(nicr,Some(prev_id),next_id) =
+          //get the prev_id node's next_id
+          let next_id = Map.lookup_default(prev_id,state.data.nodes,null_node()).next_id
+          //and loop again
+          loop_for_descend(nicr,next_id,next_id)
+
+    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+        None => abort("no addresses")
+        Some(addresses) => f(addresses)
+
+
     //------------------------------------------------------------------------------
     // EVENTS
     //------------------------------------------------------------------------------
