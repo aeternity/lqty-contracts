@@ -1,0 +1,27 @@
+@compiler >= 6
+
+include "Option.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITroveManager.aes"
+include "./dependencies/Utils.aes"
+
+contract CollSurplusPool =
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record addresses = {
+          borrower_operations: IBorrowerOperations
+        , trove_manager: ITroveManager
+        }
+
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+        }
+
+    entrypoint init()=
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        {  owner = Some(Call.caller)
+         , addresses = None
+         }
