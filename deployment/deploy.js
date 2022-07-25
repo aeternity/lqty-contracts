@@ -100,10 +100,13 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 03 */ () => deployContract( './contracts/SortedTroves.aes',
                 [],
             ),
+            /* 04 */ () => deployContract( './contracts/TroveManager.aes',
+                [],
+            ),
         ]
     try {
         //for ( const dep of deployments ) { await dep() }
-        await deployments[3]()
+        await deployments[4]()
     } catch ( ex ) {
         //empty
     }

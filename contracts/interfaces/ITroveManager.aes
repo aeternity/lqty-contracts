@@ -37,19 +37,20 @@ contract interface ITroveManager =
 
     // --- Functions ---
 
-    entrypoint set_addresses: (
-              address //borrowerOperationsAddress,
-            , address //activePoolAddress,
-            , address //defaultPoolAddress,
-            , address //stabilityPoolAddress,
-            , address //gasPoolAddress,
-            , address //collSurplusPoolAddress,
-            , address //priceFeedAddress,
-            , address //lusdTokenAddress,
-            , address //sortedTrovesAddress,
-            , address //lqtyTokenAddress,
-            , address //lqtyStakingAddress
-            ) => unit
+    //TODO: this should be splitted because of reference cycle
+    /*entrypoint set_addresses: (*/
+              /*address //borrowerOperationsAddress,*/
+            /*, address //activePoolAddress,*/
+            /*, address //defaultPoolAddress,*/
+            /*, address //stabilityPoolAddress,*/
+            /*, address //gasPoolAddress,*/
+            /*, address //collSurplusPoolAddress,*/
+            /*, address //priceFeedAddress,*/
+            /*, address //lusdTokenAddress,*/
+            /*, address //sortedTrovesAddress,*/
+            /*, address //lqtyTokenAddress,*/
+            /*, address //lqtyStakingAddress*/
+            /*) => unit*/
 
     entrypoint stability_pool: () => IStabilityPool
     entrypoint lusd_token: () => IAEUSDToken

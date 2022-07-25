@@ -1,0 +1,699 @@
+@compiler >= 6
+
+
+include "Option.aes"
+include "./interfaces/ITroveManager.aes"
+include "./interfaces/IStabilityPool.aes"
+include "./interfaces/ICollSurplusPool.aes"
+include "./interfaces/IAEUSDToken.aes"
+include "./interfaces/ISortedTroves.aes"
+include "./interfaces/ILQTYToken.aes"
+include "./interfaces/ILQTYStaking.aes"
+include "./interfaces/IBorrowerOperations.aes"
+include "./dependencies/SafeMath.aes"
+include "./dependencies/LiquityMath.aes"
+include "./dependencies/Utils.aes"
+include "./interfaces/IDefaultPool.aes"
+include "./interfaces/IPriceFeed.aes"
+
+contract TroveManager =
+
+    //------------------------------------------------------------------------------
+    // CONSTANTS
+    //------------------------------------------------------------------------------
+
+    function seconds_in_one_minute() = 60
+    /*
+     * Half-life of 12h. 12h = 720 min
+     * (1/2) = d^720 => d = (1/2)^(1/720)
+     */
+    function minute_decay_factor() = 999037758833783000
+    function redemption_fee_floor() = Utils.decimal_precision() / 1000 * 5 // 0.5%
+    function max_borrowing_fee() = Utils.decimal_precision() / 100 * 5 // 5%
+
+    // During bootsrap period redemptions are not allowed
+    function bootstrap_period() = 1209600  // 14 days
+
+    /*
+    * BETA: 18 digit decimal. Parameter by which to divide the redeemed fraction, in order to calc the new base rate from a redemption.
+    * Corresponds to (1 / ALPHA) in the white paper.
+    */
+    function beta() = 2
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record addresses = {
+        borrower_operations: IBorrowerOperations
+      , stability_pool: IStabilityPool
+      , gas_pool: address
+      , coll_surplus_pool: ICollSurplusPool
+      , aeusd_token: IAEUSDToken
+      , lqty_token: ILQTYToken
+      , lqty_staking: ILQTYStaking
+      , sorted_troves: ISortedTroves
+      , default_pool: IDefaultPool
+      , active_pool: IActivePool
+      , price_feed: IPriceFeed
+      }
+    record state =  {
+        owner: option(address)
+      , addresses: option(addresses)
+      , base_rate: int
+        // The timestamp of the latest fee operation (redemption or new AEUSD issuance)
+      , last_fee_operation_time: int
+      , troves: map(address,trove)
+      , total_stakes: int
+      // Snapshot of the value of totalStakes, taken immediately after the latest liquidation
+      , total_stakes_snapshot: int
+      // Snapshot of the total collateral across the ActivePool and DefaultPool, immediately after the latest liquidation.
+      , total_collateral_snapshot: int
+      /*
+      * L_AE and L_AEUSDDebt track the sums of accumulated liquidation rewards per unit staked. During its lifetime, each stake earns:
+      *
+      * An AE gain of ( stake * [L_AE - L_AE(0)] )
+      * A AEUSDDebt increase  of ( stake * [L_AEUSDDebt - L_AEUSDDebt(0)] )
+      *
+      * Where L_AE(0) and L_AEUSDDebt(0) are snapshots of L_AE and L_AEUSDDebt for the active Trove taken at the instant the stake was made
+      */
+      , l_ae: int
+      , l_aeusd_debt: int
+      // Map addresses with active troves to their RewardSnapshot
+      , reward_snapshots:  map (address, reward_snapshot)
+      // Array of all active trove addresses - used to to compute an approximate hint off-chain, for the sorted list insertion
+      , trove_owners: list(address)
+      // Error trackers for the trove redistribution calculation
+      , last_ae_error_redistribution: int
+      , last_aeusd_debt_error_redistribution: int
+      }
+
+    datatype status
+      = NonExistent
+      | Active
+      | ClosedByOwner
+      | ClosedByLiquidation
+      | ClosedByRedemption
+
+    datatype trove_manager_operation
+      = ApplyPendingRewards
+      | AiquidateInNormalMode
+      | AiquidateInRecoveryMode
+      | AedeemCollateral
+
+    // Store the necessary data for a trove
+    record trove = {
+        debt: int
+      , coll: int
+      , stake: int
+      , status: status
+      , array_index: int
+      }
+    // Object containing the AE and AEUSD snapshots for a given active trove
+    record reward_snapshot = {ae: int, aeusd_debt: int}
+
+    /*
+    * --- Variable container records for liquidations ---
+    *
+    * These records are used to hold, return and assign variables inside the liquidation functions,
+    * in order to avoid the error: "CompilerError: Stack too deep".
+    **/
+
+    record outer_liquidation_function = {
+        price: int
+      , aeusd_in_stab_pool: int
+      , recovery_mode_at_start: bool
+      , liquidated_debt: int
+      , liquidated_coll: int
+      }
+    function init_outer_liquidation_function_var(): outer_liquidation_function = {
+        price = 0
+      , aeusd_in_stab_pool = 0
+      , recovery_mode_at_start = false
+      , liquidated_debt = 0
+      , liquidated_coll = 0
+      }
+
+    record inner_single_liquidate_function = {
+        coll_to_liquidate: int
+      , pending_debt_reward: int
+      , pending_coll_reward: int
+      }
+
+    record liquidation_sequence = {
+        remaining_aeusd_in_stab_pool: int
+      /*, i: int*/
+      , icr: int
+      /*, user: address*/
+      , back_to_normal_mode: bool
+      , entire_system_debt: int
+      , entire_system_coll: int
+      }
+    function init_liquidation_sequence() = {
+        remaining_aeusd_in_stab_pool = 0
+      /*, i = 0*/
+      , icr = 0
+      /*, user = user*/
+      , back_to_normal_mode = false
+      , entire_system_debt = 0
+      , entire_system_coll = 0
+      }
+
+    record liquidation_values = {
+        entire_trove_debt: int
+      , entire_trove_coll: int
+      , coll_gas_compensation: int
+      , aeusd_gas_compensation: int
+      , debt_to_offset: int
+      , coll_to_send_to_sp: int
+      , debt_to_redistribute: int
+      , coll_to_redistribute: int
+      , coll_surplus: int
+      }
+
+    record liquidation_totals = {
+        total_coll_in_sequence: int
+      , total_debt_in_sequence: int
+      , total_coll_gas_compensation: int
+      , total_aeusd_gas_compensation: int
+      , total_debt_to_offset: int
+      , total_coll_to_send_to_sp: int
+      , total_debt_to_redistribute: int
+      , total_coll_to_redistribute: int
+      , total_coll_surplus: int
+      }
+    function init_liquidation_totals(): liquidation_totals = {
+        total_coll_in_sequence = 0
+      , total_debt_in_sequence = 0
+      , total_coll_gas_compensation = 0
+      , total_aeusd_gas_compensation = 0
+      , total_debt_to_offset = 0
+      , total_coll_to_send_to_sp = 0
+      , total_debt_to_redistribute = 0
+      , total_coll_to_redistribute = 0
+      , total_coll_surplus = 0
+      }
+
+    record contracts_cache = {
+        active_pool: IActivePool
+      , default_pool: IDefaultPool
+      , aeusd_token: IAEUSDToken
+      , lqty_staking: ILQTYStaking
+      , sorted_troves: ISortedTroves
+      , coll_surplus_pool: ICollSurplusPool
+      , gas_pool_address: address
+      }
+
+    /*// --- Variable container records for redemptions ---*/
+
+    record redemption_totals = {
+        remaining_aeusd: int
+      , total_aeusd_to_redeem: int
+      , total_ae_drawn: int
+      , ae_fee: int
+      , ae_to_send_to_redeemer: int
+      , decayed_base_rate: int
+      , price: int
+      , total_aeusd_supply_at_start: int
+      }
+
+    record single_redemption_values = {
+        aeusd_lot: int
+      , ae_lot: int
+      , cancelled_partial: int
+      }
+
+    //------------------------------------------------------------------------------
+    // INIT ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    entrypoint init() =
+      {  owner = None
+       , addresses = None
+       , base_rate = 0
+       , last_fee_operation_time = 0
+       , troves = {}
+       , total_stakes = 0
+       , total_stakes_snapshot = 0
+       , total_collateral_snapshot = 0
+       , l_ae = 0
+       , l_aeusd_debt = 0
+       , reward_snapshots = {}
+       , trove_owners = []
+       , last_ae_error_redistribution = 0
+       , last_aeusd_debt_error_redistribution = 0
+       }
+
+    stateful entrypoint set_addresses(addresses: addresses) =
+      //requirement
+      only_owner()
+
+      put(state{addresses = Some(addresses)})
+
+      Chain.event(BorrowerOperationsAddressChanged(addresses.borrower_operations))
+      Chain.event(ActivePoolAddressChanged(addresses.active_pool))
+      Chain.event(DefaultPoolAddressChanged(addresses.default_pool))
+      Chain.event(StabilityPoolAddressChanged(addresses.stability_pool))
+      Chain.event(GasPoolAddressChanged(addresses.gas_pool))
+      Chain.event(CollSurplusPoolAddressChanged(addresses.coll_surplus_pool))
+      Chain.event(PriceFeedAddressChanged(addresses.price_feed))
+      Chain.event(AEUSDTokenAddressChanged(addresses.aeusd_token))
+      Chain.event(SortedTrovesAddressChanged(addresses.sorted_troves))
+      Chain.event(LQTYTokenAddressChanged(addresses.lqty_token))
+      Chain.event(LQTYStakingAddressChanged(addresses.lqty_staking))
+
+      renounce_ownership()
+
+    //------------------------------------------------------------------------------
+    // DATA GETTERS
+    //------------------------------------------------------------------------------
+
+    entrypoint get_trove_owners_count() = List.length(state.trove_owners)
+
+    entrypoint get_trove_from_trove_owners_array(index: int): option(address) =
+      List.nth(index,state.trove_owners)
+
+
+    //------------------------------------------------------------------------------
+    // TROVE LIQUIDATION FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    // Single liquidation function. Closes the trove if its ICR is lower than the minimum collateral ratio.
+    stateful entrypoint liquidate(borrower: address) =
+        require_trove_is_active(borrower)
+        batch_liquidate_troves([borrower])
+
+    stateful function batch_liquidate_troves(trove_array: list(address)) = with_addresses((addresses) =>
+        require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
+
+        let active_pool = addresses.active_pool
+        let default_pool = addresses.default_pool
+        let stability_pool = addresses.stability_pool
+
+        let price = addresses.price_feed.fetch_price()
+        let vars = init_outer_liquidation_function_var() {
+              aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
+            , price = price
+            , recovery_mode_at_start = check_recovery_mode(price)
+            }
+
+        // Perform the appropriate liquidation sequence - tally values and obtain their totals.
+        let totals =
+          if (vars.recovery_mode_at_start)
+            get_total_from_batch_liquidate_recovery_mode( active_pool, default_pool, vars.price
+                                                        , vars.aeusd_in_stab_pool, trove_array )
+          else
+            get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, vars.price
+                                                       , vars.aeusd_in_stab_pool, trove_array )
+
+        require(totals.total_debt_in_sequence > 0, "TroveManager: nothing to liquidate")
+
+        // Move liquidated AE and AEUSD to the appropriate pools
+        stability_pool.offset(totals.total_debt_to_offset, totals.total_coll_to_send_to_sp)
+        redistribute_debt_and_coll(
+            active_pool
+          , default_pool
+          , totals.total_debt_to_redistribute
+          , totals.total_coll_to_redistribute
+          )
+        if (totals.total_coll_surplus > 0)
+            active_pool.send_ae(addresses.coll_surplus_pool.address, totals.total_coll_surplus)
+
+        // Update system snapshots
+        update_system_snapshots_exclude_coll_remainder(active_pool, totals.total_coll_gas_compensation)
+
+        let liquidated_debt = totals.total_debt_in_sequence
+        let liquidated_coll = SafeMath.sub(
+            SafeMath.sub(totals.total_coll_in_sequence,totals.total_coll_gas_compensation)
+          , totals.total_coll_surplus
+          )
+
+        Chain.event( Liquidation(
+            liquidated_debt
+          , liquidated_coll
+          , Utils.xsToPayload([totals.total_coll_gas_compensation, totals.total_aeusd_gas_compensation])
+          ))
+        // Send gas compensation to caller
+        send_gas_compensation(
+            active_pool
+          , Call.caller
+          , totals.total_aeusd_gas_compensation
+          , totals.total_coll_gas_compensation
+          )
+      )
+
+    /*
+    * This function is used when the batch liquidation sequence starts during Recovery Mode. However, it
+    * handle the case where the system *leaves* Recovery Mode, part way through the liquidation sequence
+    */
+    function get_total_from_batch_liquidate_recovery_mode (
+        active_pool: IActivePool
+      , default_pool: IDefaultPool
+      , price: int
+      , aeusd_in_stab_pool: int
+      , trove_array: list(address)
+      ): liquidation_totals =
+      let vars = init_liquidation_sequence() {
+          remaining_aeusd_in_stab_pool = aeusd_in_stab_pool
+        , back_to_normal_mode = false
+        , entire_system_debt = get_entire_system_debt()
+        , entire_system_coll = get_entire_system_coll()
+        }
+      let totals = init_liquidation_totals()
+      total_rec_mode_loop(totals,vars,active_pool,default_pool,price,aeusd_in_stab_pool,trove_array)
+
+    function
+      total_rec_mode_loop: (
+          liquidation_totals
+        , liquidation_sequence
+        , IActivePool
+        , IDefaultPool
+        , int /*price*/
+        , int /*aeusd_in_stab_pool*/
+        , list(address) /*trove*/
+        ) => liquidation_totals
+      total_rec_mode_loop(totals,_,_,_,_,_,[]) = totals
+      total_rec_mode_loop(totals,vars,apool,dpool,price,aeusd_in_stab_pool,h::hs) | state.troves[h].status != Active =
+        total_rec_mode_loop(totals, vars, apool,dpool,price,aeusd_in_stab_pool,hs)
+      total_rec_mode_loop(totals,vars,apool,dpool,price,aeusd_in_stab_pool,h::hs) =
+
+        let vars = vars { icr = get_current_icr(h,price) }
+        if(vars.back_to_normal_mode)
+          // Skip this trove if ICR is greater than MCR and Stability Pool is empty
+          if (vars.icr >= mcr() && vars.remaining_aeusd_in_stab_pool == 0)
+            total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
+          else
+            let tcr = LiquityMath.compute_cr(vars.entire_system_coll, vars.entire_system_debt, price)
+
+            let single_liquidation = liquidate_recovery_mode( apool, dpool, h, vars.icr
+                                                            , vars.remaining_aeusd_in_stab_pool
+                                                            , tcr, price )
+
+            // Update aggregate trackers
+            let vars = vars {
+                remaining_aeusd_in_stab_pool @ t = SafeMath.sub(t ,single_liquidation.debt_to_offset)
+              , entire_system_debt @ t  = SafeMath.sub(t,single_liquidation.debt_to_offset)
+              , entire_system_coll @ t = SafeMath.sub( SafeMath.sub( SafeMath.sub(
+                        t,
+                        single_liquidation.coll_to_send_to_sp),
+                        single_liquidation.coll_gas_compensation),
+                        single_liquidation.coll_surplus )
+              }
+
+            // Add liquidation values to their respective running totals
+            let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+            let vars = vars {
+              back_to_normal_mode = !check_potential_recovery_mode(vars.entire_system_coll, vars.entire_system_debt, price)
+              }
+            total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
+        else
+          if (vars.back_to_normal_mode && vars.icr < mcr())
+            let single_liquidation = liquidate_normal_mode(apool, dpool, h, vars.remaining_aeusd_in_stab_pool)
+            let vars = vars { remaining_aeusd_in_stab_pool @ t = SafeMath.sub(t,single_liquidation.debt_to_offset) }
+
+            // Add liquidation values to their respective running totals
+            let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+            total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
+          // In Normal Mode skip troves with ICR >= MCR
+          else total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
+
+    function get_totals_from_batch_liquidate_normal_mode (
+        active_pool: IActivePool
+      , default_pool: IDefaultPool
+      , price: int
+      , aeusd_in_stab_pool: int
+      , trove_array: list(address)
+      ): liquidation_totals =
+        let vars = init_liquidation_sequence() {
+            remaining_aeusd_in_stab_pool = aeusd_in_stab_pool
+          }
+        let totals = init_liquidation_totals()
+        total_normal_mode_loop(totals,vars,active_pool,default_pool,price,aeusd_in_stab_pool,trove_array)
+
+    function
+      total_normal_mode_loop: (
+          liquidation_totals
+        , liquidation_sequence
+        , IActivePool
+        , IDefaultPool
+        , int /*price*/
+        , int /*aeusd_in_stab_pool*/
+        , list(address) /*trove_array*/
+        ) => liquidation_totals
+      total_normal_mode_loop(totals,_,_,_,_,_,[]) = totals
+      total_normal_mode_loop(totals,vars,active_pool,default_pool,price,aeusd_in_stab_pool,h::hs) =
+        let vars = vars { icr = get_current_icr(h, price) }
+        let loop = (new_totals,new_vars) =>
+              total_normal_mode_loop(new_totals,new_vars,active_pool,default_pool,price,aeusd_in_stab_pool,hs)
+        if(vars.icr < mcr())
+          let single_liquidation = liquidate_normal_mode(active_pool, default_pool, h, vars.remaining_aeusd_in_stab_pool)
+          let vars = vars { remaining_aeusd_in_stab_pool @ t = SafeMath.sub(t,single_liquidation.debt_to_offset) }
+          // Add liquidation values to their respective running totals
+          let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+          loop(totals,vars)
+        else
+          loop(totals,vars)
+
+
+    // Liquidate one trove, in Recovery Mode.
+    function liquidate_recovery_mode(
+        activePool: IActivePool
+      , defaultPool: IDefaultPool
+      , borrower: address
+      , icr: int
+      , aeusd_in_stab_pool: int
+      , tcr: int
+      , price: int
+      ): liquidation_values = abort("nimp")
+
+    // Liquidate one trove, in Normal Mode.
+    function liquidate_normal_mode(
+        activePool: IActivePool
+      , defaultPool: IDefaultPool
+      , borrower: address
+      , aeusd_in_stab_pool: int
+      ): liquidation_values = abort("nimp")
+    function redistribute_debt_and_coll(
+        activePool: IActivePool
+      , defaultPool: IDefaultPool
+      , debt: int
+      , coll: int
+      ): unit = abort("nimp")
+
+    function send_gas_compensation(active_pool: IActivePool, liquidator: address, aeusd: int, ae: int) = with_addresses((addresses) =>
+        if (aeusd > 0)
+          addresses.aeusd_token.return_from_pool(addresses.gas_pool, liquidator, aeusd)
+
+        if (ae > 0)
+          active_pool.send_ae(liquidator, ae)
+      )
+
+    /*
+    * Updates snapshots of system total stakes and total collateral, excluding a given collateral remainder from the calculation.
+    * Used in a liquidation sequence.
+    *
+    * The calculation excludes a portion of collateral that is in the ActivePool:
+    *
+    * the total AE gas compensation from the liquidation sequence
+    *
+    * The AE as compensation must be excluded as it is always sent out at the very end of the liquidation sequence.
+    */
+    stateful function update_system_snapshots_exclude_coll_remainder(
+        activePool: IActivePool, coll_remainder: int
+        ) = with_addresses((addresses) =>
+          let active_coll = addresses.active_pool.get_ae()
+          let liquidated_coll = addresses.default_pool.get_ae()
+          let total_collateral_snapshot = SafeMath.sub(active_coll,coll_remainder + liquidated_coll)
+          let total_stakes_snapshot = state.total_stakes
+          put (state{
+            total_collateral_snapshot = total_collateral_snapshot
+            , total_stakes_snapshot = total_stakes_snapshot
+            })
+
+          Chain.event(SystemSnapshotsUpdated(total_stakes_snapshot, total_collateral_snapshot))
+        )
+
+    //------------------------------------------------------------------------------
+    // CONSTRAINTS
+    //------------------------------------------------------------------------------
+
+    function require_caller_is_borrower_operations() = with_addresses((addresses) =>
+        require(
+          Call.caller == addresses.borrower_operations.address,
+          "TroveManager: Caller is not the BorrowerOperations contract" )
+      )
+
+    function null_trove(): trove = {
+        debt = 0
+      , coll = 0
+      , stake = 0
+      , status = NonExistent
+      , array_index = -1
+      }
+    function require_trove_is_active(borrower: address) = require(
+        Map.lookup_default(borrower,state.troves,null_trove()).status == Active,
+        "TroveManager: Trove does not exist or is closed"
+      )
+
+    function require_aeusd_balance_covers_redemption(redeemer: address, amount: int) = with_addresses((addresses) =>
+        require(
+          Option.default(0,addresses.aeusd_token.balance(redeemer)) >= amount,
+          "TroveManager: Requested redemption amount must be <= user's AEUSD token balance" )
+      )
+
+    function require_more_than_one_trove_in_system(trove_owners_array_length: int) = with_addresses( (addresses) =>
+        require(
+          trove_owners_array_length > 1 && addresses.sorted_troves.get_size() > 1,
+          "TroveManager: Only one trove in the system" )
+      )
+
+    function require_amount_greater_than_zero(amount: int) =
+        require( amount > 0, "TroveManager: Amount must be greater than zero")
+
+    function require_tcr_over_mcr(price: int) =
+        require(get_tcr(price) >= mcr(), "TroveManager: Cannot redeem when TCR < MCR")
+
+    function require_after_bootstrap_period() = with_addresses((addresses) =>
+        let system_deployment_time = addresses.lqty_token.get_deployment_start_time()
+        require(
+          Chain.timestamp >= system_deployment_time + bootstrap_period(),
+          "TroveManager: Redemptions are not allowed during bootstrap phase" )
+      )
+
+    function require_valid_max_fee_percentage(max_fee_percentage: int) = require(
+        max_fee_percentage >= redemption_fee_floor() && max_fee_percentage =< Utils.decimal_precision(),
+        "Max fee percentage must be between 0.5% and 100%"
+      )
+
+    //------------------------------------------------------------------------------
+    // UTILS
+    //------------------------------------------------------------------------------
+
+    // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
+    function get_current_icr(borrower: address, price: int) =
+        let (current_ae, current_aeusd_debt) = get_current_trove_amounts(borrower)
+        LiquityMath.compute_cr(current_ae, current_aeusd_debt, price)
+
+    function get_current_trove_amounts(borrower: address): (int* int) =
+        let pending_ae_reward = get_pending_ae_reward(borrower)
+        let pending_aeusd_debt_reward = get_pending_aeusd_debt_reward(borrower)
+
+        let trove = state.troves[borrower]
+        let current_ae = trove.coll + pending_ae_reward
+        let current_aeusd_debt = trove.debt + pending_aeusd_debt_reward
+
+        (current_ae, current_aeusd_debt)
+
+    // Get the borrower's pending accumulated AE reward, earned by their stake
+    function get_pending_ae_reward(borrower: address): int =
+        let snapshot_ae = state.reward_snapshots[borrower].ae
+        let reward_per_unit_staked = SafeMath.sub(state.l_ae,snapshot_ae)
+
+        let trove = state.troves[borrower]
+        if ( reward_per_unit_staked == 0 || trove.status != Active) 0
+        else SafeMath.div(trove.stake * reward_per_unit_staked,Utils.decimal_precision())
+
+    // Get the borrower's pending accumulated AEUSD reward, earned by their stake
+    function get_pending_aeusd_debt_reward(borrower: address) =
+        let snapshot_aeusd_debt = state.reward_snapshots[borrower].aeusd_debt
+        let reward_per_unit_staked = SafeMath.sub(state.l_aeusd_debt,snapshot_aeusd_debt)
+
+        let trove = state.troves[borrower]
+        if ( reward_per_unit_staked == 0 || trove.status != Active) 0
+        else SafeMath.div(trove.stake * reward_per_unit_staked,Utils.decimal_precision())
+
+
+    function add_liquidation_values_to_totals(
+        old_totals: liquidation_totals
+      , single_liquidation: liquidation_values
+      ): liquidation_totals /*newTotals*/ =
+
+      // Tally all the values with their respective running totals
+      {   total_coll_gas_compensation = old_totals.total_coll_gas_compensation + single_liquidation.coll_gas_compensation
+        , total_aeusd_gas_compensation = old_totals.total_aeusd_gas_compensation + single_liquidation.aeusd_gas_compensation
+        , total_debt_in_sequence = old_totals.total_debt_in_sequence + single_liquidation.entire_trove_debt
+        , total_coll_in_sequence = old_totals.total_coll_in_sequence + single_liquidation.entire_trove_coll
+        , total_debt_to_offset = old_totals.total_debt_to_offset + single_liquidation.debt_to_offset
+        , total_coll_to_send_to_sp = old_totals.total_coll_to_send_to_sp + single_liquidation.coll_to_send_to_sp
+        , total_debt_to_redistribute = old_totals.total_debt_to_redistribute + single_liquidation.debt_to_redistribute
+        , total_coll_to_redistribute = old_totals.total_coll_to_redistribute + single_liquidation.coll_to_redistribute
+        , total_coll_surplus = old_totals.total_coll_surplus + single_liquidation.coll_surplus
+        }
+
+    // Check whether or not the system *would be* in Recovery Mode, given an AE:USD price, and the entire system coll and debt.
+    function check_potential_recovery_mode(
+        entire_system_coll: int
+      , entire_system_debt: int
+      , price: int
+      ): bool =
+        let tcr = LiquityMath.compute_cr(entire_system_coll, entire_system_debt, price)
+        tcr < ccr()
+
+    //------------------------------------------------------------------------------
+    // EVENTS
+    //------------------------------------------------------------------------------
+
+    datatype event
+      = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)
+      | PriceFeedAddressChanged(IPriceFeed /*newPriceFeedAddress*/)
+      | AEUSDTokenAddressChanged(IAEUSDToken /*newAEUSDTokenAddress*/)
+      | ActivePoolAddressChanged(IActivePool /*activePoolAddress*/)
+      | DefaultPoolAddressChanged(IDefaultPool /*defaultPoolAddress*/)
+      | StabilityPoolAddressChanged(IStabilityPool /*stabilityPoolAddress*/)
+      | GasPoolAddressChanged(address /*gasPoolAddress*/)
+      | CollSurplusPoolAddressChanged(ICollSurplusPool /*collSurplusPoolAddress*/)
+      | SortedTrovesAddressChanged(ISortedTroves /*sortedTrovesAddress*/)
+      | LQTYTokenAddressChanged(ILQTYToken /*lqtyTokenAddress*/)
+      | LQTYStakingAddressChanged(ILQTYStaking /*lqtyStakingAddress*/)
+
+      | Liquidation(
+            int /*liquidatedDebt*/
+          , int /*liquidatedColl*/
+          , string
+          /*
+          , int collGasCompensation
+          , int _AEUSDGasCompensation
+          */
+          )
+      | Redemption(
+            int /*attemptedAEUSDAmount*/
+          , int /*actualAEUSDAmount*/
+          , string
+          /*
+          , int AESent
+          , int AEFee
+          */
+          )
+      | TroveUpdated(
+            address  /*borrower*/
+          , int /*debt*/
+          , string
+          /*
+          , TroveManagerOperation
+          , int coll
+          , int stake
+          */
+          )
+      | TroveLiquidated(
+            address /*borrower*/
+          , string
+          /*
+          , TroveManagerOperation
+          , int debt
+          , int coll
+          */
+          )
+      | BaseRateUpdated(int /*baseRate*/)
+      | LastFeeOpTimeUpdated(int /*lastFeeOpTime*/)
+      | TotalStakesUpdated(int /*newTotalStakes*/)
+      | SystemSnapshotsUpdated(int /*totalStakesSnapshot*/, int /*totalCollateralSnapshot*/)
+      | LTermsUpdated(int /*l_ae*/, int /*L_AEUSDDebt*/)
+      | TroveSnapshotsUpdated(int /*l_ae*/, int /*L_AEUSDDebt*/)
+      | TroveIndexUpdated(address /*borrower*/, int /*newIndex*/)
+//#inject "./dependencies/Ownable.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+//#inject "./dependencies/Ownable.functions.aes"
+//#inject "./dependencies/LiquityBase.functions.aes"
+
