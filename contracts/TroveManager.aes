@@ -81,6 +81,7 @@ contract TroveManager =
       // Map addresses with active troves to their RewardSnapshot
       , reward_snapshots:  map (address, reward_snapshot)
       // Array of all active trove addresses - used to to compute an approximate hint off-chain, for the sorted list insertion
+      //TODO: this might be canged with a Set
       , trove_owners: list(address)
       // Error trackers for the trove redistribution calculation
       , last_ae_error_redistribution: int
@@ -96,9 +97,16 @@ contract TroveManager =
 
     datatype trove_manager_operation
       = ApplyPendingRewards
-      | AiquidateInNormalMode
-      | AiquidateInRecoveryMode
-      | AedeemCollateral
+      | LiquidateInNormalMode
+      | LiquidateInRecoveryMode
+      | RedeemCollateral
+
+    function
+      trove_manager_operation_to_str: (trove_manager_operation) => string
+      trove_manager_operation_to_str(ApplyPendingRewards)     = "ApplyPendingRewards"
+      trove_manager_operation_to_str(LiquidateInNormalMode)   = "LiquidateInNormalMode"
+      trove_manager_operation_to_str(LiquidateInRecoveryMode) = "LiquidateInRecoveryMode"
+      trove_manager_operation_to_str(RedeemCollateral)        = "RedeemCollateral"
 
     // Store the necessary data for a trove
     record trove = {
@@ -118,6 +126,7 @@ contract TroveManager =
     * in order to avoid the error: "CompilerError: Stack too deep".
     **/
 
+    //TODO: remove if not used at the end of first implementation
     record outer_liquidation_function = {
         price: int
       , aeusd_in_stab_pool: int
@@ -168,6 +177,17 @@ contract TroveManager =
       , debt_to_redistribute: int
       , coll_to_redistribute: int
       , coll_surplus: int
+      }
+    function init_liquidation_values() = {
+        entire_trove_debt = 0
+      , entire_trove_coll = 0
+      , coll_gas_compensation = 0
+      , aeusd_gas_compensation = 0
+      , debt_to_offset = 0
+      , coll_to_send_to_sp = 0
+      , debt_to_redistribute = 0
+      , coll_to_redistribute = 0
+      , coll_surplus = 0
       }
 
     record liquidation_totals = {
@@ -290,20 +310,17 @@ contract TroveManager =
         let stability_pool = addresses.stability_pool
 
         let price = addresses.price_feed.fetch_price()
-        let vars = init_outer_liquidation_function_var() {
-              aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
-            , price = price
-            , recovery_mode_at_start = check_recovery_mode(price)
-            }
+        let aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
+        let recovery_mode_at_start = check_recovery_mode(price)
 
         // Perform the appropriate liquidation sequence - tally values and obtain their totals.
         let totals =
-          if (vars.recovery_mode_at_start)
-            get_total_from_batch_liquidate_recovery_mode( active_pool, default_pool, vars.price
-                                                        , vars.aeusd_in_stab_pool, trove_array )
+          if (recovery_mode_at_start)
+            get_total_from_batch_liquidate_recovery_mode( active_pool, default_pool, price
+                                                        , aeusd_in_stab_pool, trove_array )
           else
-            get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, vars.price
-                                                       , vars.aeusd_in_stab_pool, trove_array )
+            get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, price
+                                                       , aeusd_in_stab_pool, trove_array )
 
         require(totals.total_debt_in_sequence > 0, "TroveManager: nothing to liquidate")
 
@@ -345,7 +362,7 @@ contract TroveManager =
     * This function is used when the batch liquidation sequence starts during Recovery Mode. However, it
     * handle the case where the system *leaves* Recovery Mode, part way through the liquidation sequence
     */
-    function get_total_from_batch_liquidate_recovery_mode (
+    stateful function get_total_from_batch_liquidate_recovery_mode (
         active_pool: IActivePool
       , default_pool: IDefaultPool
       , price: int
@@ -361,7 +378,7 @@ contract TroveManager =
       let totals = init_liquidation_totals()
       total_rec_mode_loop(totals,vars,active_pool,default_pool,price,aeusd_in_stab_pool,trove_array)
 
-    function
+    stateful function
       total_rec_mode_loop: (
           liquidation_totals
         , liquidation_sequence
@@ -416,7 +433,7 @@ contract TroveManager =
           // In Normal Mode skip troves with ICR >= MCR
           else total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
 
-    function get_totals_from_batch_liquidate_normal_mode (
+    stateful function get_totals_from_batch_liquidate_normal_mode (
         active_pool: IActivePool
       , default_pool: IDefaultPool
       , price: int
@@ -429,7 +446,7 @@ contract TroveManager =
         let totals = init_liquidation_totals()
         total_normal_mode_loop(totals,vars,active_pool,default_pool,price,aeusd_in_stab_pool,trove_array)
 
-    function
+    stateful function
       total_normal_mode_loop: (
           liquidation_totals
         , liquidation_sequence
@@ -454,30 +471,186 @@ contract TroveManager =
           loop(totals,vars)
 
 
+    function emitLiquidateEvents(borrower,debt,coll,operation) =
+          Chain.event(TroveLiquidated(
+              borrower
+            , Utils.xsToPayload'(
+                [debt, coll]
+              , trove_manager_operation_to_str(operation)
+              )
+            ))
+          Chain.event(TroveUpdated(
+                borrower
+              , 0
+              , Utils.xsToPayload'(
+                  [0, 0]
+                , trove_manager_operation_to_str(operation))
+              ) )
     // Liquidate one trove, in Recovery Mode.
-    function liquidate_recovery_mode(
-        activePool: IActivePool
-      , defaultPool: IDefaultPool
-      , borrower: address
-      , icr: int
-      , aeusd_in_stab_pool: int
-      , tcr: int
-      , price: int
-      ): liquidation_values = abort("nimp")
+    stateful function
+      liquidate_recovery_mode: (
+          /*activePool:*/ IActivePool
+        , /*defaultPool:*/ IDefaultPool
+        , /*borrower:*/ address
+        , /*icr:*/ int
+        , /*aeusd_in_stab_pool:*/ int
+        , /*tcr:*/ int
+        , /*price:*/ int
+        ) => liquidation_values
+      liquidate_recovery_mode(_, _, _, _, _, _, _) | List.length(state.trove_owners) =< 1 = init_liquidation_values()
+      liquidate_recovery_mode(
+          active_pool, default_pool, borrower, icr, aeusd_in_stab_pool, tcr, price
+        ) = with_addresses((addresses) =>
+          let emitEvents = (debt,coll) => emitLiquidateEvents(borrower,debt,coll,LiquidateInRecoveryMode)
+          let (entire_trove_debt, entire_trove_coll, pending_debt_reward, pending_coll_reward) = get_entire_debt_and_coll(borrower)
+          let single_liquidation = init_liquidation_values() {
+              entire_trove_debt = entire_trove_debt
+            , entire_trove_coll = entire_trove_coll
+            , coll_gas_compensation = get_coll_gas_compensation(entire_trove_coll)
+            , aeusd_gas_compensation = aeusd_gas_compensation()
+            }
+          let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
+          // If ICR <= 100%, purely redistribute the Trove across all active Troves
+          if(icr =< pct_100())
+            move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
+            remove_stake(borrower)
+
+            let single_liquidation = single_liquidation {
+                debt_to_offset = 0
+              , coll_to_send_to_sp = 0
+              , debt_to_redistribute = single_liquidation.entire_trove_debt
+              , coll_to_redistribute = coll_to_liquidate
+              }
+            close_trove(borrower, ClosedByLiquidation)
+            emitEvents( single_liquidation.entire_trove_debt, single_liquidation.entire_trove_coll )
+            single_liquidation
+          else
+            // If 100% < ICR < MCR, offset as much as possible, and redistribute the remainder
+            if((icr > pct_100()) && (icr < mcr()))
+              move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
+              remove_stake(borrower)
+
+              let (debt_to_offset, coll_to_send_to_sp, debt_to_redistribute, coll_to_redistribute) =
+                get_offset_and_redistribution_vals(single_liquidation.entire_trove_debt, coll_to_liquidate, aeusd_in_stab_pool)
+              let single_liquidation = single_liquidation {
+                    debt_to_offset = debt_to_offset
+                  , coll_to_send_to_sp = coll_to_send_to_sp
+                  , debt_to_redistribute = debt_to_redistribute
+                  , coll_to_redistribute = coll_to_redistribute
+                  }
+
+              close_trove(borrower, ClosedByLiquidation)
+              emitEvents(single_liquidation.entire_trove_debt, single_liquidation.entire_trove_coll)
+              single_liquidation
+            else
+              /*
+              * If 110% <= ICR < current TCR (accounting for the preceding liquidations in the current sequence)
+              * and there is AEUSD in the Stability Pool, only offset, with no redistribution,
+              * but at a capped rate of 1.1 and only if the whole debt can be liquidated.
+              * The remainder due to the capped rate will be claimable as collateral surplus.
+              */
+              if ((icr >= mcr()) && (icr < tcr) && (single_liquidation.entire_trove_debt =< aeusd_in_stab_pool))
+                move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
+                require(aeusd_in_stab_pool != 0,"TroveManager: aeusd_in_stab_pool is 0")
+
+                remove_stake(borrower)
+                let single_liquidation = get_capped_offset_vals(
+                    single_liquidation.entire_trove_debt
+                  , single_liquidation.entire_trove_coll
+                  , price
+                  )
+
+                close_trove(borrower, ClosedByLiquidation)
+                if (single_liquidation.coll_surplus > 0)
+                    addresses.coll_surplus_pool.account_surplus(borrower, single_liquidation.coll_surplus)
+
+                emitEvents(single_liquidation.entire_trove_debt, single_liquidation.coll_to_send_to_sp)
+                single_liquidation
+              else init_liquidation_values()
+        )
 
     // Liquidate one trove, in Normal Mode.
-    function liquidate_normal_mode(
-        activePool: IActivePool
-      , defaultPool: IDefaultPool
+    stateful function liquidate_normal_mode(
+        active_pool: IActivePool
+      , default_pool: IDefaultPool
       , borrower: address
       , aeusd_in_stab_pool: int
-      ): liquidation_values = abort("nimp")
-    function redistribute_debt_and_coll(
-        activePool: IActivePool
-      , defaultPool: IDefaultPool
-      , debt: int
-      , coll: int
-      ): unit = abort("nimp")
+      ): liquidation_values =
+
+        let (entire_trove_debt, entire_trove_coll, pending_debt_reward, pending_coll_reward) = get_entire_debt_and_coll(borrower)
+
+        move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
+        remove_stake(borrower)
+
+        let single_liquidation = init_liquidation_values(){
+            entire_trove_debt = entire_trove_debt
+          , entire_trove_coll = entire_trove_coll
+          , coll_gas_compensation = get_coll_gas_compensation(entire_trove_coll)
+          , aeusd_gas_compensation = aeusd_gas_compensation()
+          }
+        let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
+
+        let ( debt_to_offset , coll_to_send_to_sp , debt_to_redistribute , coll_to_redistribute) =
+            get_offset_and_redistribution_vals(single_liquidation.entire_trove_debt, coll_to_liquidate, aeusd_in_stab_pool)
+
+        let single_liquidation = single_liquidation {
+            debt_to_offset       = debt_to_offset
+          , coll_to_send_to_sp   = coll_to_send_to_sp
+          , debt_to_redistribute = debt_to_redistribute
+          , coll_to_redistribute = coll_to_redistribute
+          }
+
+        close_trove(borrower, ClosedByLiquidation)
+        emitLiquidateEvents(
+            borrower
+          , single_liquidation.entire_trove_debt
+          , single_liquidation.entire_trove_coll
+          , LiquidateInNormalMode )
+        single_liquidation
+
+    stateful function
+      redistribute_debt_and_coll: (
+          /*activePool:*/ IActivePool
+        , /*defaultPool:*/ IDefaultPool
+        , /*debt:*/ int
+        , /*coll:*/ int) => unit
+      redistribute_debt_and_coll( _ , _ , 0 , _) = ()
+      redistribute_debt_and_coll( active_pool , default_pool , debt , coll) =
+        /*
+        * Add distributed coll and debt rewards-per-unit-staked to the running totals. Division uses a "feedback"
+        * error correction, to keep the cumulative error low in the running totals L_AE and L_AEUSDDebt:
+        *
+        * 1) Form numerators which compensate for the floor division errors that occurred the last time this
+        * function was called.
+        * 2) Calculate "per-unit-staked" ratios.
+        * 3) Multiply each ratio back by its denominator, to reveal the current floor division error.
+        * 4) Store these errors for use in the next correction when this function is called.
+        * 5) Note: static analysis tools complain about this "division before multiplication", however, it is intended.
+        */
+        let ae_numerator = SafeMath.add(coll * Utils.decimal_precision(),state.last_ae_error_redistribution)
+        let aeusd_debt_numerator = SafeMath.add(debt* Utils.decimal_precision(),state.last_aeusd_debt_error_redistribution)
+
+        // Get the per-unit-staked terms
+        let total_stakes = state.total_stakes
+        let ae_reward_per_unit_staked = SafeMath.div(ae_numerator,total_stakes)
+        let aeusd_debt_reward_per_unit_staked = SafeMath.div(aeusd_debt_numerator,total_stakes)
+
+        put( state {
+              last_ae_error_redistribution = SafeMath.sub(ae_numerator,ae_reward_per_unit_staked * total_stakes)
+            , last_aeusd_debt_error_redistribution =
+                SafeMath.sub(aeusd_debt_numerator,aeusd_debt_reward_per_unit_staked * total_stakes)
+            // Add per-unit-staked terms to the running totals
+            , l_ae @ l = SafeMath.add(l,ae_reward_per_unit_staked)
+            , l_aeusd_debt @ l = SafeMath.add(l, aeusd_debt_reward_per_unit_staked)
+          })
+
+
+        Chain.event(LTermsUpdated(state.l_ae, state.l_aeusd_debt))
+
+        // Transfer coll and debt from ActivePool to DefaultPool
+        active_pool.decrease_aeusd_debt(debt)
+        default_pool.increase_aeusd_debt(debt)
+        active_pool.send_ae(default_pool.address, coll)
 
     function send_gas_compensation(active_pool: IActivePool, liquidator: address, aeusd: int, ae: int) = with_addresses((addresses) =>
         if (aeusd > 0)
@@ -486,6 +659,17 @@ contract TroveManager =
         if (ae > 0)
           active_pool.send_ae(liquidator, ae)
       )
+
+    // Move a Trove's pending debt and collateral rewards from distributions, from the Default Pool to the Active Pool
+    function move_pending_trove_rewards_to_active_pool(
+        active_pool: IActivePool
+      , default_pool: IDefaultPool
+      , aeusd: int
+      , ae: int
+      ) =
+      default_pool.decrease_aeusd_debt(aeusd)
+      active_pool.increase_aeusd_debt(aeusd)
+      default_pool.send_ae_to_active_pool(ae)
 
     /*
     * Updates snapshots of system total stakes and total collateral, excluding a given collateral remainder from the calculation.
@@ -511,6 +695,119 @@ contract TroveManager =
 
           Chain.event(SystemSnapshotsUpdated(total_stakes_snapshot, total_collateral_snapshot))
         )
+
+    // Return the Troves entire debt and coll, including pending rewards from redistributions.
+    function get_entire_debt_and_coll(
+      borrower: address
+      ): (int /*debt*/ * int /*coll*/ * int /*pending_aeusd_debt_reward*/ * int /*pending_ae_reward*/) =
+
+      let pending_aeusd_debt_reward = get_pending_aeusd_debt_reward(borrower)
+      let pending_ae_reward = get_pending_ae_reward(borrower)
+
+      let trove = state.troves[borrower]
+      let debt = trove.debt +  pending_aeusd_debt_reward
+      let coll = trove.coll + pending_ae_reward
+
+      (debt,coll,pending_aeusd_debt_reward,pending_ae_reward)
+
+    // Remove borrower's stake from the totalStakes sum, and set their stake to 0
+    stateful function remove_stake(borrower: address) =
+        put(state{
+            total_stakes @ ts = SafeMath.sub(ts,state.troves[borrower].stake)
+          , troves[ borrower ] @ t = t { stake = 0 }
+          })
+
+    stateful function close_trove(borrower: address, closed_status: status) = with_addresses( (addresses) =>
+        require(closed_status != NonExistent && closed_status != Active, "TroveManager: invalid status for closing trove")
+
+        let trove_owners_array_length = List.length(state.trove_owners)
+        require_more_than_one_trove_in_system(trove_owners_array_length)
+
+        put( state {
+            troves[ borrower ] @ t = t {
+                status = closed_status
+              , coll = 0
+              , debt = 0
+              }
+          , reward_snapshots[ borrower ] @ r = r {
+                ae = 0
+              , aeusd_debt = 0
+              }
+          })
+
+        remove_trove_owner(borrower, trove_owners_array_length)
+        addresses.sorted_troves.remove(borrower)
+      )
+
+    /*
+    * Remove a Trove owner from the TroveOwners array, not preserving array order. Removing owner 'B' does the following:
+    * [A B C D E] => [A E C D], and updates E's Trove struct to point to its new array index.
+    */
+    stateful function remove_trove_owner(borrower: address, trove_owners_array_length: int) =
+        let trove_status = state.troves[borrower].status
+        // It’s set in caller function `_closeTrove`
+        require(trove_status != NonExistent && trove_status != Active, "TroveManager: invalid status for removing trove")
+
+        let index = state.troves[borrower].array_index
+        let length = trove_owners_array_length
+        let idx_last = SafeMath.sub(length,1)
+
+        require(index =< idx_last,"TroveManager: invald index for removing trove")
+
+        let address_to_move = List.get(idx_last,state.trove_owners)
+
+        put(state{
+            trove_owners @ t = List.take(idx_last,List.replace_at(index,address_to_move,t))
+          , troves[address_to_move] @ t = t {array_index = index}
+          })
+        Chain.event(TroveIndexUpdated(address_to_move, index))
+
+    /* In a full liquidation, returns the values for a trove's coll and debt to be offset, and coll and debt to be
+    * redistributed to active troves.
+    */
+    function get_offset_and_redistribution_vals (
+        debt: int
+      , coll: int
+      , aeusd_in_stab_pool: int
+      ): (int /*debt_to_offset*/ * int /*coll_to_send_to_sp*/ * int /*debt_to_redistribute*/ * int /*coll_to_redistribute*/) =
+      if (aeusd_in_stab_pool > 0)
+        /*
+        * Offset as much debt & collateral as possible against the Stability Pool, and redistribute the remainder
+        * between all active troves.
+        *
+        *  If the trove's debt is larger than the deposited AEUSD in the Stability Pool:
+        *
+        *  - Offset an amount of the trove's debt equal to the AEUSD in the Stability Pool
+        *  - Send a fraction of the trove's collateral to the Stability Pool, equal to the fraction of its offset debt
+        *
+        */
+        let debt_to_offset       = LiquityMath.min(debt, aeusd_in_stab_pool)
+        let coll_to_send_to_sp   = SafeMath.div(coll * debt_to_offset,debt)
+        let debt_to_redistribute = SafeMath.sub(debt,debt_to_offset)
+        let coll_to_redistribute = SafeMath.sub(coll,coll_to_send_to_sp)
+        (debt_to_offset , coll_to_send_to_sp , debt_to_redistribute , coll_to_redistribute)
+      else (0 , 0 , debt , coll)
+
+    /*
+     *  Get its offset coll/debt and AE gas comp, and close the trove.
+     */
+    function get_capped_offset_vals(
+        entire_trove_debt: int
+      , entire_trove_coll: int
+      , price: int
+      ): liquidation_values =
+      let capped_coll_portion = SafeMath.div(entire_trove_debt*mcr(),price)
+      let coll_gas_compensation = get_coll_gas_compensation(capped_coll_portion)
+      {  entire_trove_debt      = entire_trove_debt
+       , entire_trove_coll      = entire_trove_coll
+       , coll_gas_compensation  = coll_gas_compensation
+       , aeusd_gas_compensation = aeusd_gas_compensation()
+       , debt_to_offset         = entire_trove_debt
+       , coll_to_send_to_sp     = SafeMath.sub(capped_coll_portion,coll_gas_compensation)
+       , coll_surplus           = SafeMath.sub(entire_trove_coll,capped_coll_portion)
+       , debt_to_redistribute   = 0
+       , coll_to_redistribute   = 0
+       }
 
     //------------------------------------------------------------------------------
     // CONSTRAINTS
