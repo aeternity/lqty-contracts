@@ -486,6 +486,248 @@ contract TroveManager =
                   [0, 0]
                 , trove_manager_operation_to_str(operation))
               ) )
+
+    /*
+    * Liquidate a sequence of troves. Closes a maximum number of n under-collateralized Troves,
+    * starting from the one with the lowest collateral ratio in the system, and moving upwards
+    */
+    stateful entrypoint liquidate_troves(n: int) = with_addresses((addresses) =>
+        let price = addresses.price_feed.fetch_price()
+        let aeusd_in_stab_pool = addresses.stability_pool.get_total_aeusd_deposits()
+        let recovery_mode_at_start = check_recovery_mode(price)
+
+        // Perform the appropriate liquidation sequence - tally the values, and obtain their totals
+        let get_totals =
+          if (recovery_mode_at_start)
+            get_totals_from_liquidate_troves_sequence_recovery_mode
+          else // if !vars.recoveryModeAtStart
+            get_totals_from_liquidate_troves_sequence_normal_mode
+        let totals = get_totals(price, aeusd_in_stab_pool, n)
+
+        require(totals.total_debt_in_sequence > 0, "TroveManager: nothing to liquidate")
+
+        // Move liquidated AE and AEUSD to the appropriate pools
+        addresses.stability_pool.offset(totals.total_debt_to_offset, totals.total_coll_to_send_to_sp)
+        redistribute_debt_and_coll(
+            addresses.active_pool
+          , addresses.default_pool
+          , totals.total_debt_to_redistribute
+          , totals.total_coll_to_redistribute
+          )
+
+        if (totals.total_coll_surplus > 0)
+            addresses.active_pool.send_ae(addresses.coll_surplus_pool.address, totals.total_coll_surplus)
+
+        // Update system snapshots
+        update_system_snapshots_exclude_coll_remainder(addresses.active_pool, totals.total_coll_gas_compensation)
+
+        let liquidated_debt = totals.total_debt_in_sequence
+        let liquidated_coll = SafeMath.sub(
+              SafeMath.sub(totals.total_coll_in_sequence,totals.total_coll_gas_compensation)
+            , totals.total_coll_surplus
+            )
+        Chain.event( Liquidation(
+            liquidated_debt
+          , liquidated_coll
+          , Utils.xsToPayload([totals.total_coll_gas_compensation, totals.total_aeusd_gas_compensation])
+          ))
+
+        // Send gas compensation to caller
+        send_gas_compensation(
+            addresses.active_pool
+          , Call.caller
+          , totals.total_aeusd_gas_compensation
+          , totals.total_coll_gas_compensation
+          )
+      )
+
+    /*
+    * This function is used when the liquidateTroves sequence starts during Recovery Mode. However, it
+    * handle the case where the system *leaves* Recovery Mode, part way through the liquidation sequence
+    */
+    stateful function get_totals_from_liquidate_troves_sequence_recovery_mode (
+        price: int
+      , aeusd_in_stab_pool: int
+      , n: int
+      ): liquidation_totals = with_addresses((addresses) =>
+        /*LocalVariables_LiquidationSequence memory vars*/
+        let single_liquidation = init_liquidation_values()
+
+        let remaining_aeusd_in_stab_pool = aeusd_in_stab_pool
+        let back_to_normal_mode = false
+        let entire_system_debt = get_entire_system_debt()
+        let entire_system_coll = get_entire_system_coll()
+
+        let user = addresses.sorted_troves.get_last()
+        let first_user = addresses.sorted_troves.get_first()
+        totals_from_liquidate_troves_sequence_recovery_mode_loop(
+            init_liquidation_totals()
+          , n
+          , price
+          , entire_system_coll
+          , entire_system_debt
+          , remaining_aeusd_in_stab_pool
+          , back_to_normal_mode
+          , user
+          , first_user
+          , addresses )
+
+        /*for (vars.i = 0 vars.i < _n && vars.user != firstUser vars.i++) {*/
+        /*}*/
+        abort("Asd")
+      )
+    stateful function
+      totals_from_liquidate_troves_sequence_recovery_mode_loop: (
+          liquidation_totals /*acc*/
+        , int                /*step*/
+        , int                /*price*/
+        , int                /*entire_system_coll*/
+        , int                /*entire_system_debt*/
+        , int                /*remaining_aeusd_in_stab_pool*/
+        , bool               /*back_to_normal_mode*/
+        , option(address)    /*current user*/
+        , option(address)    /*first user*/
+        , addresses
+        ) => liquidation_totals
+      totals_from_liquidate_troves_sequence_recovery_mode_loop(totals, step, _, _, _, _, _, user_opt, first_user_opt, _)
+        | step =< 0 || user_opt == None || user_opt == first_user_opt = totals
+      totals_from_liquidate_troves_sequence_recovery_mode_loop(
+          totals
+        , step
+        , price
+        , entire_system_coll
+        , entire_system_debt
+        , remaining_aeusd_in_stab_pool
+        , back_to_normal_mode
+        , user_opt
+        , first_user_opt
+        , addresses
+        ) =
+        let user = Option.force(user_opt)
+        // we need to cache it, because current user is likely going to be deleted
+        let next_user_opt = addresses.sorted_troves.get_prev(user)
+        // continuation for the next iteration/user
+        let continue = (
+            totals
+          , entire_system_coll
+          , entire_system_debt
+          , remaining_aeusd_in_stab_pool ) => totals_from_liquidate_troves_sequence_recovery_mode_loop(
+                  totals
+                , step - 1
+                , price
+                , entire_system_coll
+                , entire_system_debt
+                , remaining_aeusd_in_stab_pool
+                , back_to_normal_mode
+                , next_user_opt
+                , first_user_opt
+                , addresses )
+
+        let icr = get_current_icr(user, price)
+
+        if (!back_to_normal_mode)
+            // Break the loop if ICR is greater than MCR and Stability Pool is empty
+            if (icr >= mcr() && remaining_aeusd_in_stab_pool == 0) totals
+            else
+              let tcr = LiquityMath.compute_cr(entire_system_coll, entire_system_debt, price)
+
+              let single_liquidation = liquidate_recovery_mode(
+                  addresses.active_pool
+                , addresses.default_pool
+                , user
+                , icr
+                , remaining_aeusd_in_stab_pool
+                , tcr
+                , price )
+
+              // Update aggregate trackers
+              let remaining_aeusd_in_stab_pool = SafeMath.sub(remaining_aeusd_in_stab_pool,single_liquidation.debt_to_offset)
+              let entire_system_debt = SafeMath.sub(entire_system_debt,single_liquidation.debt_to_offset)
+              let entire_system_coll = List.foldl( SafeMath.sub
+                , entire_system_coll
+                ,[ single_liquidation.coll_to_send_to_sp
+                 , single_liquidation.coll_gas_compensation
+                 , single_liquidation.coll_surplus
+                 ] )
+
+              // Add liquidation values to their respective running totals
+              let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+
+              let back_to_normal_mode = !check_potential_recovery_mode(entire_system_coll, entire_system_debt, price)
+
+              continue(totals, entire_system_coll, entire_system_debt, remaining_aeusd_in_stab_pool)
+        else
+          if (back_to_normal_mode && icr < mcr())
+            let single_liquidation = liquidate_normal_mode(
+                addresses.active_pool
+              , addresses.default_pool
+              , user
+              , remaining_aeusd_in_stab_pool )
+
+            let remaining_aeusd_in_stab_pool = SafeMath.sub(remaining_aeusd_in_stab_pool,single_liquidation.debt_to_offset)
+
+            // Add liquidation values to their respective running totals
+            let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+
+            continue(totals, entire_system_coll, entire_system_debt, remaining_aeusd_in_stab_pool)
+          else // break if the loop reaches a Trove with ICR >= MCR*/
+            totals
+
+    stateful function get_totals_from_liquidate_troves_sequence_normal_mode (
+        price: int
+      , aeusd_in_stab_pool: int
+      , n: int
+      ): liquidation_totals = with_addresses((addresses)=>
+        totals_from_liquidate_troves_sequence_normal_mode_loop(
+            init_liquidation_totals()
+          , n
+          , price
+          , aeusd_in_stab_pool
+          , addresses )
+      )
+
+    stateful function
+      totals_from_liquidate_troves_sequence_normal_mode_loop: (
+          liquidation_totals    /*acc*/
+        , int                   /*step*/
+        , int                   /*price*/
+        , int                   /*remaining_aeusd_in_stab_pool*/
+        , addresses
+        ) => liquidation_totals
+      totals_from_liquidate_troves_sequence_normal_mode_loop(totals,step,_,_,_) | step =< 0 = totals
+      totals_from_liquidate_troves_sequence_normal_mode_loop(
+          totals
+        , step
+        , price
+        , remaining_aeusd_in_stab_pool
+        , addresses ) =
+        let user_opt = addresses.sorted_troves.get_last()
+        switch(user_opt)
+          None       => totals
+          Some(user) =>
+            let icr = get_current_icr(user, price)
+
+            if (icr < mcr())
+                let single_liquidation = liquidate_normal_mode(
+                    addresses.active_pool
+                  , addresses.default_pool
+                  , user
+                  , remaining_aeusd_in_stab_pool )
+
+                let remaining_aeusd_in_stab_pool = SafeMath.sub(
+                    remaining_aeusd_in_stab_pool
+                  , single_liquidation.debt_to_offset )
+
+                // Add liquidation values to their respective running totals
+                let totals = add_liquidation_values_to_totals(totals, single_liquidation)
+                totals_from_liquidate_troves_sequence_normal_mode_loop(
+                    totals
+                  , step - 1
+                  , price
+                  , remaining_aeusd_in_stab_pool
+                  , addresses )
+            else totals // break if the loop reaches a Trove with ICR >= MCR*/
+
     // Liquidate one trove, in Recovery Mode.
     stateful function
       liquidate_recovery_mode: (
