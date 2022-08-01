@@ -17,7 +17,7 @@
 const { Universal, MemoryAccount, Node, Crypto } = require( '@aeternity/aepp-sdk' )
 const contractUtils = require( '../utils/contract-utils' )
 const fs = require( 'fs' )
-require( 'dotenv' ).config()
+require( 'dotenv-flow' ).config()
 
 const { NETWORKS } = require( '../config/network.js' )
 const DEFAULT_NETWORK_NAME = 'local'
