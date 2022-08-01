@@ -71,13 +71,13 @@ contract interface ITroveManager =
     stateful entrypoint batch_liquidate_troves: (list(address) /*_troveArray*/) => unit
 
     stateful entrypoint redeem_collateral: (
-          int       // uint _AEUSDAmount,
-        , address   // firstRedemptionHint,
-        , address   // upperPartialRedemptionHint,
-        , address   // lowerPartialRedemptionHint,
-        , int       // partialRedemptionHintNICR,
-        , int       // maxIterations,
-        , int       // maxFee
+          int               // uint _AEUSDAmount,
+        , option(address)   // firstRedemptionHint,
+        , address           // upperPartialRedemptionHint,
+        , address           // lowerPartialRedemptionHint,
+        , int               // partialRedemptionHintNICR,
+        , int               // maxIterations,
+        , int               // maxFee
         ) => unit
 
     stateful entrypoint update_stake_and_total_stakes: (address /*_borrower*/) => int

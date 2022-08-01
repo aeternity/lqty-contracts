@@ -118,6 +118,7 @@ contract TroveManager =
       }
     // Object containing the AE and AEUSD snapshots for a given active trove
     record reward_snapshot = {ae: int, aeusd_debt: int}
+    function null_reward_snapshot() = {ae = 0, aeusd_debt = 0}
 
     /*
     * --- Variable container records for liquidations ---
@@ -236,10 +237,27 @@ contract TroveManager =
       , total_aeusd_supply_at_start: int
       }
 
+    function init_redemption_totals() = {
+        remaining_aeusd = 0
+      , total_aeusd_to_redeem = 0
+      , total_ae_drawn = 0
+      , ae_fee = 0
+      , ae_to_send_to_redeemer = 0
+      , decayed_base_rate = 0
+      , price = 0
+      , total_aeusd_supply_at_start = 0
+      }
+
     record single_redemption_values = {
         aeusd_lot: int
       , ae_lot: int
-      , cancelled_partial: int
+      , cancelled_partial: bool
+      }
+
+    function init_single_redemption_values(): single_redemption_values = {
+        aeusd_lot = 0
+      , ae_lot = 0
+      , cancelled_partial = false
       }
 
     //------------------------------------------------------------------------------
@@ -571,10 +589,6 @@ contract TroveManager =
           , user
           , first_user
           , addresses )
-
-        /*for (vars.i = 0 vars.i < _n && vars.user != firstUser vars.i++) {*/
-        /*}*/
-        abort("Asd")
       )
     stateful function
       totals_from_liquidate_troves_sequence_recovery_mode_loop: (
@@ -1052,6 +1066,279 @@ contract TroveManager =
        }
 
     //------------------------------------------------------------------------------
+    // REDEEM FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    /* Send _AEUSDamount AEUSD to the system and redeem the corresponding amount of collateral from as many Troves as are needed to fill the redemption
+    * request.  Applies pending rewards to a Trove before reducing its debt and coll.
+    *
+    * Note that if _amount is very large, this function can run out of gas, specially if traversed troves are small. This can be easily avoided by
+    * splitting the total _amount in appropriate chunks and calling the function multiple times.
+    *
+    * Param `_maxIterations` can also be provided, so the loop through Troves is capped (if it’s zero, it will be ignored).This makes it easier to
+    * avoid OOG for the frontend, as only knowing approximately the average cost of an iteration is enough, without needing to know the “topology”
+    * of the trove list. It also avoids the need to set the cap in stone in the contract, nor doing gas calculations, as both gas price and opcode
+    * costs can vary.
+    *
+    * All Troves that are redeemed from -- with the likely exception of the last one -- will end up with no debt left, therefore they will be closed.
+    * If the last Trove does have some remaining debt, it has a finite ICR, and the reinsertion could be anywhere in the list, therefore it requires a hint.
+    * A frontend should use getRedemptionHints() to calculate what the ICR of this Trove will be after redemption, and pass a hint for its position
+    * in the sortedTroves list along with the ICR value that the hint was found for.
+    *
+    * If another transaction modifies the list between calling getRedemptionHints() and passing the hints to redeemCollateral(), it
+    * is very likely that the last (partially) redeemed Trove would end up with a different ICR than what the hint is for. In this case the
+    * redemption will stop after the last completely redeemed Trove and the sender will keep the remaining AEUSD amount, which they can attempt
+    * to redeem later.
+    */
+    //TODO: for debugger purposes we can return total, but we have to move redemption_totals in interface
+    stateful entrypoint redeem_collateral(
+        aeusd_amount: int
+      , first_redemption_hint: option(address)
+      , upper_partial_redemption_hint: address
+      , lower_partial_redemption_hint: address
+      , partial_redemption_hint_nicr: int
+      , max_iterations: int
+      , max_fee_percentage: int
+      ) = with_addresses((addresses) =>
+
+        require_valid_max_fee_percentage(max_fee_percentage)
+        require_after_bootstrap_period()
+
+        let totals = init_redemption_totals(){
+              price = addresses.price_feed.fetch_price()
+            , total_aeusd_supply_at_start = get_entire_system_debt()
+            , remaining_aeusd = aeusd_amount
+          }
+        require_tcr_over_mcr(totals.price)
+        require_amount_greater_than_zero(aeusd_amount)
+        require_aeusd_balance_covers_redemption(Call.caller, aeusd_amount)
+
+        // Confirm redeemer's balance is less than total AEUSD supply
+        require(
+            Option.default(0,addresses.aeusd_token.balance(Call.caller)) =< totals.total_aeusd_supply_at_start
+          , "TroveManager: aeusd_token redemer balance is greater than total_aeusd_supply_at_start" )
+
+        let current_borrower =
+          if (is_valid_first_redemption_hint(addresses.sorted_troves, first_redemption_hint, totals.price))
+            first_redemption_hint
+          else
+            // Find the first trove with ICR >= MCR
+            first_trove_with_icr_gte_than_mcr(
+                addresses.sorted_troves
+              , addresses.sorted_troves.get_last()
+              , totals.price
+              )
+
+        // Loop through the Troves starting from the one with lowest collateral ratio until _amount of AEUSD is exchanged for collateral
+        let max_iterations =
+          //TODO: this is uint(-1) from solidy -> we should decide a maximum number of iterations
+          //taking in consideration also stack overflows (if any)
+          if (max_iterations == 0) 115792089237316195423570985008687907853269984665640564039457584007913129639935 //max uint256
+          else max_iterations
+        let totals = redeem_collateral_loop'(
+            totals
+          , max_iterations
+          , current_borrower
+          , upper_partial_redemption_hint
+          , lower_partial_redemption_hint
+          , partial_redemption_hint_nicr
+          , addresses )
+
+        require(totals.total_ae_drawn > 0, "TroveManager: Unable to redeem any amount")
+
+        // Decay the baseRate due to time passed, and then increase it according to the size of this redemption.
+        // Use the saved total AEUSD supply value, from before it was reduced by the redemption.
+        update_base_rate_from_redemption(totals.total_ae_drawn, totals.price, totals.total_aeusd_supply_at_start)
+
+        // Calculate the AE fee
+        let totals  = totals { ae_fee = get_redemption_fee(totals.total_ae_drawn) }
+
+        require_user_accepts_fee(totals.ae_fee, totals.total_ae_drawn, max_fee_percentage)
+
+        // Send the AE fee to the LQTY staking contract
+        addresses.active_pool.send_ae(addresses.lqty_staking.address, totals.ae_fee)
+        addresses.lqty_staking.increase_f_ae(totals.ae_fee)
+
+        let totals = totals { ae_to_send_to_redeemer = SafeMath.sub(totals.total_ae_drawn,totals.ae_fee) }
+
+        Chain.event( Redemption(
+            aeusd_amount
+          , totals.total_aeusd_to_redeem
+          , Utils.xsToPayload([
+              totals.total_ae_drawn
+            , totals.ae_fee] )))
+
+        // Burn the total AEUSD that is cancelled with debt, and send the redeemed AE to msg.sender
+        addresses.aeusd_token.burn(Call.caller, totals.total_aeusd_to_redeem)
+        // Update Active Pool AEUSD, and send AE to account
+        addresses.active_pool.decrease_aeusd_debt(totals.total_aeusd_to_redeem)
+        addresses.active_pool.send_ae(Call.caller, totals.ae_to_send_to_redeemer)
+      )
+
+    stateful function
+      redeem_collateral_loop': (
+          redemption_totals  /*acc*/
+        , int                /*step*/
+        , option(address)    /*current_borrower*/
+        , address            /*upper_partial_redemption_hint*/
+        , address            /*lower_partial_redemption_hint*/
+        , int                /*partial_redemption_hint_nicr*/
+        , addresses          /*addresses*/
+        ) => redemption_totals
+      redeem_collateral_loop'(totals,0,_,_,_,_,_) = totals
+      redeem_collateral_loop'(totals,_,None,_,_,_,_) = totals
+      redeem_collateral_loop'(totals,_,_,_,_,_,_) | totals.remaining_aeusd =< 0 = totals
+      redeem_collateral_loop'(
+          totals
+        , step
+        , Some(current_borrower)
+        , upper_partial_redemption_hint
+        , lower_partial_redemption_hint
+        , partial_redemption_hint_nicr
+        , addresses ) =
+        // Save the address of the Trove preceding the current one, before potentially modifying the list
+        let next_user_to_check = addresses.sorted_troves.get_prev(current_borrower)
+
+        apply_pending_rewards(addresses.active_pool, addresses.default_pool, current_borrower)
+
+        let single_redemption = redeem_collateral_from_trove(
+            addresses
+          , current_borrower
+          , totals.remaining_aeusd
+          , totals.price
+          , upper_partial_redemption_hint
+          , lower_partial_redemption_hint
+          , partial_redemption_hint_nicr
+          )
+
+        if (single_redemption.cancelled_partial)  // Partial redemption was cancelled (out-of-date hint, or new net debt < minimum),
+          totals                                  // therefore we could not redeem from the last Trove
+        else
+          let totals = totals {
+              total_aeusd_to_redeem @ t = t + single_redemption.aeusd_lot
+            , total_ae_drawn @ t = t + single_redemption.ae_lot
+            , remaining_aeusd @ r  = SafeMath.sub(r, single_redemption.aeusd_lot)
+            }
+          redeem_collateral_loop'(
+              totals
+            , step - 1
+            , next_user_to_check
+            , upper_partial_redemption_hint
+            , lower_partial_redemption_hint
+            , partial_redemption_hint_nicr
+            , addresses )
+
+    function
+      first_trove_with_icr_gte_than_mcr: (ISortedTroves, option(address),int) => option(address)
+      first_trove_with_icr_gte_than_mcr  (_, None,_) = None
+      first_trove_with_icr_gte_than_mcr  (_, Some(current_borrower),price)
+        | get_current_icr(current_borrower,price) >= mcr() = Some(current_borrower)
+      first_trove_with_icr_gte_than_mcr  (sorted_troves, Some(current_borrower),price) =
+          //loop towards the previous user
+          first_trove_with_icr_gte_than_mcr(
+              sorted_troves
+            , sorted_troves.get_prev(current_borrower)
+            , price )
+
+    function
+      is_valid_first_redemption_hint: ( ISortedTroves , option(address) , int ) => bool
+      is_valid_first_redemption_hint  ( _, None, _ ) = false
+      is_valid_first_redemption_hint  ( sorted_troves, Some(first_redemption_hint), price ) |
+        !sorted_troves.contains(first_redemption_hint)
+        || get_current_icr(first_redemption_hint, price) < mcr() = false
+      is_valid_first_redemption_hint  ( sorted_troves, Some(first_redemption_hint), price ) =
+        switch(sorted_troves.get_next(first_redemption_hint))
+          None => true
+          Some(next_trove) => get_current_icr(next_trove, price) < mcr()
+
+    /*
+    * This function has two impacts on the baseRate state variable:
+    * 1) decays the baseRate based on time passed since last redemption or AEUSD borrowing operation.
+    * then,
+    * 2) increases the baseRate based on the amount redeemed, as a proportion of total supply
+    */
+    stateful function update_base_rate_from_redemption(ae_drawn: int, price: int, total_aeusd_supply: int): int =
+      let decayed_base_rate = calc_decayed_base_rate()
+
+      /* Convert the drawn AE back to AEUSD at face value rate (1 AEUSD:1 USD), in order to get
+      * the fraction of total supply that was redeemed at face value. */
+      let redeemed_aeusd_fraction = SafeMath.div(ae_drawn*price,total_aeusd_supply)
+
+      let new_base_rate = decayed_base_rate + SafeMath.div(redeemed_aeusd_fraction,beta())
+      let new_base_rate = LiquityMath.min(new_base_rate, Utils.decimal_precision()) // cap baseRate at a maximum of 100%
+      // Base rate is always non-zero after redemption
+      require(new_base_rate > 0,"TroveManager: new_base_rate must be strict positive")
+
+      /*// Update the baseRate state variable*/
+      put(state{ base_rate = new_base_rate})
+      Chain.event(BaseRateUpdated(new_base_rate))
+
+      update_last_fee_op_time()
+
+      new_base_rate
+
+    // Update the last fee operation time only if time passed >= decay interval. This prevents base rate griefing.
+    stateful function update_last_fee_op_time() =
+        let time_passed = SafeMath.sub(Chain.timestamp,state.last_fee_operation_time)
+
+        if (time_passed >= seconds_in_one_minute())
+            put(state{ last_fee_operation_time = Chain.timestamp })
+            Chain.event(LastFeeOpTimeUpdated(Chain.timestamp))
+
+    function get_redemption_fee(ae_drawn: int): int =
+        calc_redemption_fee(get_redemption_rate(), ae_drawn)
+
+    entrypoint get_redemption_fee_with_decay(ae_drawn: int): int =
+        calc_redemption_fee(get_redemption_rate_with_decay(), ae_drawn)
+
+    entrypoint get_redemption_rate_with_decay(): int =
+        calc_redemption_rate(calc_decayed_base_rate())
+
+    function calc_redemption_fee(redemption_rate: int, ae_drawn: int): int =
+        let redemption_fee = SafeMath.div(redemption_rate*ae_drawn,Utils.decimal_precision())
+        require(redemption_fee < ae_drawn, "TroveManager: Fee would eat up all returned collateral")
+        redemption_fee
+
+    function get_redemption_rate(): int =
+        calc_redemption_rate(state.base_rate)
+
+    function calc_redemption_rate(base_rate: int) = LiquityMath.min(
+        redemption_fee_floor() + base_rate,
+        Utils.decimal_precision() // cap at a maximum of 100%
+        )
+
+    //------------------------------------------------------------------------------
+    // OTHER STATEFUL ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    // Update borrower's snapshots of L_AE and L_AEUSDDebt to reflect the current values
+    stateful entrypoint update_trove_reward_snapshots(borrower: address) =
+      require_caller_is_borrower_operations()
+      update_trove_reward_snapshots'(borrower)
+
+    stateful function update_trove_reward_snapshots'(borrower: address) =
+      put(state{ reward_snapshots[ borrower ] @ rs = rs {
+            ae = state.l_ae
+          , aeusd_debt = state.l_aeusd_debt
+        } })
+      Chain.event(TroveSnapshotsUpdated( state.l_ae, state.l_aeusd_debt))
+
+    //------------------------------------------------------------------------------
+    // STATELESS ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    entrypoint has_pending_rewards(borrower: address): bool =
+        /*
+        * A Trove has pending rewards if its snapshot is less than the current rewards per-unit-staked sum:
+        * this indicates that rewards have occured since the snapshot was made, and the user therefore has
+        * pending rewards
+        */
+        if(Map.lookup_default(borrower,state.troves,null_trove()).status != Active)
+          false
+        else
+          Map.lookup_default(borrower,state.reward_snapshots,null_reward_snapshot()).ae < state.l_ae
+
+    //------------------------------------------------------------------------------
     // CONSTRAINTS
     //------------------------------------------------------------------------------
 
@@ -1106,6 +1393,155 @@ contract TroveManager =
     //------------------------------------------------------------------------------
     // UTILS
     //------------------------------------------------------------------------------
+
+    // Add the borrowers's coll and debt rewards earned from redistributions, to their Trove
+    stateful function apply_pending_rewards(active_pool: IActivePool, default_pool: IDefaultPool, borrower: address) =
+        if (has_pending_rewards(borrower))
+          require_trove_is_active(borrower)
+          // Compute pending rewards
+          let pending_ae_reward = get_pending_ae_reward(borrower)
+          let pending_aeusd_debt_reward = get_pending_aeusd_debt_reward(borrower)
+
+          // Apply pending rewards to trove's state
+          put(state{ troves[ borrower ] @ t = t {
+                coll @ c = c + pending_ae_reward
+              , debt @ d = d + pending_aeusd_debt_reward
+            } })
+
+          update_trove_reward_snapshots'(borrower)
+
+          /*// Transfer from DefaultPool to ActivePool*/
+          move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_aeusd_debt_reward, pending_ae_reward)
+
+          let trove = state.troves[borrower]
+          Chain.event(TroveUpdated(
+                borrower
+              , trove.debt
+              , Utils.xsToPayload'(
+                  [trove.coll, trove.stake]
+                , trove_manager_operation_to_str(ApplyPendingRewards))
+              ) )
+
+    // Redeem as much collateral as possible from _borrower's Trove in exchange for AEUSD up to _maxAEUSDamount
+    stateful function redeem_collateral_from_trove(
+        addresses: addresses
+      , borrower: address
+      , max_aeusd_amount: int
+      , price: int
+      , upper_partial_redemption_hint
+      , lower_partial_redemption_hint: address
+      , partial_redemption_hint_nicr: int
+      ): single_redemption_values =
+      let trove = state.troves[borrower]
+      let aeusd_lot = LiquityMath.min( max_aeusd_amount, SafeMath.sub(trove.debt,aeusd_gas_compensation()))
+      let single_redemption = init_single_redemption_values(){
+          // Determine the remaining amount (lot) to be redeemed, capped by the entire debt of the Trove minus the liquidation reserve
+          aeusd_lot = aeusd_lot
+          // Get the AELot of equivalent value in USD
+        , ae_lot = SafeMath.div(aeusd_lot * Utils.decimal_precision(),price)
+        }
+      // Decrease the debt and collateral of the current Trove according to the AEUSD lot and corresponding AE to send
+      let new_debt = SafeMath.sub(trove.debt,single_redemption.aeusd_lot)
+      let new_coll = SafeMath.sub(trove.coll,single_redemption.ae_lot)
+
+      if (new_debt == aeusd_gas_compensation())
+          // No debt left in the Trove (except for the liquidation reserve), therefore the trove gets closed
+          remove_stake(borrower)
+          close_trove(borrower, ClosedByRedemption)
+          redeem_close_trove(addresses, borrower, new_debt, new_coll)
+          Chain.event(TroveUpdated(
+                borrower
+              , 0
+              , Utils.xsToPayload'(
+                  [0, 0]
+                , trove_manager_operation_to_str(RedeemCollateral))
+              ) )
+          single_redemption
+      else
+          let new_nicr = LiquityMath.compute_nominal_cr(new_coll, new_debt)
+
+          /*
+          * If the provided hint is out of date, we bail since trying to reinsert without a good hint will almost
+          * certainly result in running out of gas.
+          *
+          * If the resultant net debt of the partial is less than the minimum, net debt we bail.
+          */
+          if (new_nicr != partial_redemption_hint_nicr || get_net_debt(new_debt) < min_net_debt())
+            single_redemption {cancelled_partial = true}
+          else
+            addresses.sorted_troves.re_insert(
+                borrower
+              , new_nicr
+              , upper_partial_redemption_hint
+              , lower_partial_redemption_hint )
+
+            put( state { troves[borrower] @ t = t { debt = new_debt, coll = new_coll } })
+            update_stake_and_total_stakes(borrower)
+
+            Chain.event(TroveUpdated(
+                  borrower
+                , new_debt
+                , Utils.xsToPayload'(
+                    [new_coll, state.troves[borrower].stake]
+                  , trove_manager_operation_to_str(RedeemCollateral))
+                ) )
+            single_redemption
+
+    // Update borrower's stake based on their latest collateral value
+    stateful function update_stake_and_total_stakes(borrower: address): int =
+        let trove = state.troves[borrower]
+        let new_stake = compute_new_stake(trove.coll)
+        let old_stake = trove.stake
+
+        put(state{
+            troves[borrower] @ t = t { stake = new_stake }
+          , total_stakes @ t = SafeMath.sub(t,old_stake) + new_stake
+          })
+        Chain.event(TotalStakesUpdated(state.total_stakes))
+
+        new_stake
+
+    // Calculate a new stake based on the snapshots of the totalStakes and totalCollateral taken at the last liquidation
+    function compute_new_stake(coll: int): int =
+        let total_collateral_snapshot = state.total_collateral_snapshot
+        if (total_collateral_snapshot == 0) coll
+        else
+          /*
+          * The following assert() holds true because:
+          * - The system always contains >= 1 trove
+          * - When we close or liquidate a trove, we redistribute the pending rewards, so if all troves were closed/liquidated,
+          * rewards would’ve been emptied and totalCollateralSnapshot would be zero too.
+          */
+          let total_stakes_snapshot = state.total_stakes_snapshot
+          require( total_stakes_snapshot> 0,"TroveManager: total_stakes_snapshot should strict positive")
+          SafeMath.div(coll * total_stakes_snapshot,total_collateral_snapshot)
+
+    /*
+    * Called when a full redemption occurs, and closes the trove.
+    * The redeemer swaps (debt - liquidation reserve) AEUSD for (debt - liquidation reserve) worth of AE, so the AEUSD liquidation reserve left corresponds to the remaining debt.
+    * In order to close the trove, the AEUSD liquidation reserve is burned, and the corresponding debt is removed from the active pool.
+    * The debt recorded on the trove's struct is zero'd elswhere, in _closeTrove.
+    * Any surplus AE left in the trove, is sent to the Coll surplus pool, and can be later claimed by the borrower.
+    */
+    stateful function redeem_close_trove(addresses: addresses,borrower: address, aeusd: int, ae: int) =
+        addresses.aeusd_token.burn(addresses.gas_pool, aeusd)
+        // Update Active Pool AEUSD, and send AE to account
+        addresses.active_pool.decrease_aeusd_debt(aeusd)
+
+        // send AE from Active Pool to CollSurplus Pool
+        addresses.coll_surplus_pool.account_surplus(borrower, ae)
+        addresses.active_pool.send_ae(addresses.coll_surplus_pool.address, ae)
+
+    function calc_decayed_base_rate(): int =
+        let minutes_passed = minutes_passed_since_last_fee_op()
+        let decay_factor = LiquityMath.dec_pow(minute_decay_factor(), minutes_passed)
+
+        SafeMath.div(state.base_rate * decay_factor,Utils.decimal_precision())
+
+    function minutes_passed_since_last_fee_op(): int =
+        SafeMath.div(
+          SafeMath.sub(Chain.timestamp,state.last_fee_operation_time),
+          seconds_in_one_minute() )
 
     // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
     function get_current_icr(borrower: address, price: int) =
