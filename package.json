@@ -16,7 +16,7 @@
     "aeternity-fungible-token": "^1.0.0",
     "axios": "^0.24.0",
     "crypto": "^1.0.1",
-    "dotenv": "^16.0.1",
+    "dotenv-flow": "^3.2.0",
     "fs": "^0.0.1-security"
   },
   "devDependencies": {
