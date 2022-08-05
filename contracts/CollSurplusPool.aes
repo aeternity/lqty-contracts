@@ -1,10 +1,8 @@
 @compiler >= 6
 
 include "Option.aes"
-include "./dependencies/SafeMath.aes"  
 include "./interfaces/IBorrowerOperations.aes"
 include "./interfaces/ITroveManager.aes"
-include "./interfaces/IActivePool.aes"
 include "./dependencies/Utils.aes"
 
 contract CollSurplusPool =
@@ -15,115 +13,15 @@ contract CollSurplusPool =
     record addresses = {
           borrower_operations: IBorrowerOperations
         , trove_manager: ITroveManager
-	, active_pool: IActivePool
         }
 
     record state = {
           owner: option(address)
         , addresses: option(addresses)
-	, ae: int
-	, balances: map(address,int)
         }
 
-    entrypoint init() =
+    entrypoint init()=
         Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
         {  owner = Some(Call.caller)
          , addresses = None
-	 , ae = 0
-	 , balances = {}
-        }
-
-    stateful entrypoint set_addresses(addresses: addresses) =
-      //requirement
-      only_owner()
-
-      put(state{addresses = Some(addresses)})
-
-      Chain.event(BorrowerOperationsAddressChanged(addresses.borrower_operations))
-      Chain.event(TroveManagerAddressChanged(addresses.trove_manager))
-      Chain.event(ActivePoolAddressChanged(addresses.active_pool))
-
-      renounce_ownership()
-
-
-    /* Returns the ETH state variable at ActivePool address.
-       Not necessarily equal to the raw ether balance - ether can be forcibly sent to contracts. */
-    entrypoint get_ae(): int = state.ae
-
-    entrypoint get_collateral(account: address): int = state.balances[account]
-
-    // --- Pool functionality ---  
-
-    stateful entrypoint account_surplus(account: addresses, amount: int) =
-      // requirement
-      require_caller_is_trove_manager();
-
-      let new_amount = SafeMath.add(state.balances[account], amount)
-      put(state { balances @ b = b {[account] = new_amount}})
-
-      Chain.event(CollBalanceUpdated(account, new_amount))	
-
-    stateful entrypoint claim_coll(account: addresses) =
-      // requirement
-      require_caller_is_borrower_operations()
-
-      let claimable_coll: int = state.balances[account]
-      require_claimable_coll_greater_than_zero(claimable_coll)
-
-      put(state { balances @ b = b {[account] = 0}
-		, ae @ a = SafeMath.sub(a, claimable_coll) 
-	        }
-	 )
-      Chain.event(CollBalanceUpdated(account, 0))
-      Chain.event(EtherSent(account, claimable_coll))
-
-      Chain.spend(account, claimable_coll)
-
-	
-    //------------------------------------------------------------------------------
-    // UTILS
-    //------------------------------------------------------------------------------
-
-    function require_caller_is_borrower_operations() = with_addresses((addresses) =>
-        require(
-          Call.caller == addresses.borrower_operations.address,
-          "CollSurplusPool: Caller is not the BorrowerOperations contract" )
-      )
-
-    function require_caller_is_trove_manager() = with_addresses((addresses) =>
-      require(Call.caller == addresses.trove_manager.address, "CollSurplusPool: Caller is not the TroveManager")
-      )
-
-    function require_claimable_coll_greater_than_zero(claimable_coll: int) =
-        require( claimable_coll > 0, "CollSurplusPoll: No collateral available to claim")
-
-    function require_caller_is_active_pool() = with_addresses((addresses) =>
-        require(
-          Call.caller == addresses.active_pool.address,
-          "CollSurplusPool: Caller is not Active Poolo" )
-      )
-  
-    payable stateful entrypoint receive_ae() =
-        require_caller_is_active_pool()
-        put( state { ae @ p = p + Call.value } )
-        Chain.event( CollBalanceUpdated(state.ae) )
-
-    //------------------------------------------------------------------------------
-    // EVENTS
-    //------------------------------------------------------------------------------
-
-    datatype event
-        = BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)
-        | TroveManagerAddressChanged(ITroveManager /*newTroveManagerAddress*/)
-        | ActivePoolAddressChanged(address /*newActivePoolAddressid*/)
-        | CollBalanceUpdated(address /*account*/, int /*balance*/)
-        | EtherSent(address /*to*/, int /*amount*/)
-
-//#inject "./dependencies/Ownable.events.aes"
-
-    //------------------------------------------------------------------------------
-    // EXTENTIONS
-    //------------------------------------------------------------------------------
-
-//#inject "./dependencies/Ownable.functions.aes"
-  
+         }
