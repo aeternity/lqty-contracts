@@ -9,7 +9,8 @@ include "./interfaces/ILQTYStaking.aes"
 include "./interfaces/IAEUSDToken.aes"
 include "./interfaces/ISortedTroves.aes"
 include "./interfaces/ITellorCaller.aes"
-include "./ActivePool.aes"
+include "./interfaces/ICollSurplusPool.aes"  
+include "./CollSurplusPool.aes"
 
 main contract BuildAll =
     entrypoint init() = ()

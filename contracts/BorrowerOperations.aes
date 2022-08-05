@@ -40,7 +40,6 @@ contract BorrowerOperations =
         , gas_pool: address
         }
 
-
     // A doubly linked list of Troves, sorted by their collateral ratios
 
     record contracts_cache = {
@@ -52,6 +51,7 @@ contract BorrowerOperations =
     //NOTE: we are declaring it here because pattern matching
     //doesn't play well with sum types declared in interfaces
     datatype borrower_operation = OpenTrove | CloseTrove | AdjustTrove
+
 
     function
         borrower_operation_to_str: borrower_operation => string
@@ -119,7 +119,7 @@ contract BorrowerOperations =
         , aeusd_amount: int
         , upper_hint: address
         , lower_hint: address
-        ): IBorrowerOperations.open_trove = with_addresses( (addresses) =>
+        ): IBorrowerOperations.open_trove = with_addresses( (addresses) => /* why returns an open_trove record, solidity contract seems to not to return nothing
             /*let contracts_cache: contracts_cache = {*/
                       /*trove_manager = addresses.trove_manager*/
                     /*, active_pool = addresses.active_pool*/
@@ -143,16 +143,16 @@ contract BorrowerOperations =
 
             /*vars.AEUSDFee*/ //TODO: i don't know what exactly this supposed to do
 
-            let vars = if (is_recovery_mode) vars {
+            let vars = if (!is_recovery_mode) vars {
                               aeusd_fee = trigger_borrowing_fee(aeusd_amount, max_fee_percentage)
                             , net_debt @ p = SafeMath.add(p,vars.aeusd_fee)
                             }
-                       else vars
+                       else vars 
 
             require_at_least_min_net_debt(vars.net_debt)
 
             // ICR is based on the composite debt, i.e. the requested AEUSD amount + AEUSD borrowing fee + AEUSD gas comp.
-            let vars = vars { composite_debt = get_composite_debt(vars.net_debt) }
+            let vars = vars { composite_debt = get_composite_debt(vars.net_debt) } // same variable name can be reassigned ?
             require(vars.composite_debt > 0, "BorrowerOps: composite_debt should be greater then 0")
 
             let vars = vars {  icr = LiquityMath.compute_cr(Call.value, vars.composite_debt, vars.price)
@@ -190,7 +190,7 @@ contract BorrowerOperations =
                     borrower_operation_to_str(OpenTrove)
                 )))
             Chain.event(AEUSDBorrowingFeePaid(Call.caller, vars.aeusd_fee))
-            vars
+            vars // why return the record, sophia analog function seems not to return nothing ?
         )
 
     // Send AE as collateral to a trove
@@ -313,7 +313,7 @@ contract BorrowerOperations =
             // If the adjustment incorporates a debt increase and system is in Normal Mode, then trigger a borrowing fee
             let vars =
                 if (is_debt_increase && !is_recovery_mode)
-                    vars { aeusd_fee = trigger_borrowing_fee(aeusd_change, max_fee_percentage)
+                    vars { aeusd_fee = trigger_borrowing_fee(aeusd_change, max_fee_percentage) // contractsCache.troveManager, contractsCache.lusdToken ?
                          , net_debt_change @ p = SafeMath.add(p,vars.aeusd_fee)
                          }
                 else vars
@@ -495,7 +495,7 @@ contract BorrowerOperations =
 
         if (is_coll_increase)
             // Send AE to Active Pool and increase its recorded AE balance
-            active_pool.receive_ae(value=coll_change)
+            active_pool.receive_ae(value=coll_change) // here solidity uses call ??
         else
             active_pool.send_ae(borrower, coll_change)
 
