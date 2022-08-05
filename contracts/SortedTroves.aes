@@ -12,6 +12,7 @@ contract SortedTroves =
 
     // Information for a node in the list
     record node = {
+          // exists : bool not added cause maps in Solidity have any key with default values
           next_id: option(address)         // Id of next node (smaller NICR) in the list
         , prev_id: option(address)         // Id of previous node (larger NICR) in the list
         }
@@ -119,7 +120,7 @@ contract SortedTroves =
                      }})
           // Insert after `nextId` as the tail
           (Some(prev_id),None,_,None) => abort("tail is null")
-          (Some(prev_id),None,_,Some(tail)) =>
+	  (Some(prev_id),None,_,Some(tail)) => // require prev_id == tail
             put(state{data @ p = p {
                           nodes @ x = x { [id] = {prev_id = Some(tail), next_id = None }
                                         , [tail] @ h = h { next_id = Some(id)}
@@ -133,7 +134,7 @@ contract SortedTroves =
                                         , [prev_id] @ b = b { next_id = Some(id)}
                                         , [next_id] @ b = b { prev_id = Some(id)}
                                         }
-                        , tail = Some(id)
+			  , tail = Some(id) // wrong, probably leftover from cut&past :)
                      }})
         //increase size
         put(state{ data @ d = d { size @ s = s + 1 }})
@@ -156,6 +157,7 @@ contract SortedTroves =
         if(Some(id) == head_opt)
           // The removed node is the head
           let new_head_id: address = Option.force(Option.force(Map.lookup(id,state.data.nodes)).next_id)
+	  // let new_head_id: address = Option.force(state.data.nodes[id].next_id) 
           put(state{ data @ d = d {
                   // Set head to next node
                   head = Some(new_head_id)
@@ -166,6 +168,7 @@ contract SortedTroves =
           if(Some(id) == state.data.tail)
            // The removed node is the tail
            let new_tail_id: address = Option.force(Option.force(Map.lookup(id,state.data.nodes)).prev_id)
+	   // let new_tail_id: address = Option.force(state.data.nodes[id].prev_id)
            put(state{ data @ d = d {
                  // Set tail to previous node
                  tail = Some(new_tail_id)
@@ -175,6 +178,7 @@ contract SortedTroves =
           else
             // The removed node is neither the head nor the tail
             let node = Option.force(Map.lookup(id,state.data.nodes))
+	    // let node = state.data.nodes[id]
             let prev_id: address = Option.force(node.prev_id)
             let next_id: address = Option.force(node.next_id)
             put(state{ data @ d = d {
@@ -325,15 +329,21 @@ contract SortedTroves =
      )
 
     function
-      /*// Descend the list until we reach the end or until we find a valid insert position*/
+      /*// Ascend the list until we reach the end or until we find a valid insert position*/
       loop_for_ascend: (int,option(address),option(address)) => (option(address)*option(address))
       loop_for_ascend(_,prev_id,None) = (prev_id,None)
       loop_for_ascend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
       loop_for_ascend(nicr,prev_id,Some(next_id)) =
           //get the next_id node's prev_id
-          let prev_id = Map.lookup_default(next_id,state.data.nodes,null_node()).prev_id
+          let prev_prev_id = Option.match(None, (prev_id') => get_node(prev_id').prev_id)
           //and loop again
-          loop_for_descend(nicr,prev_id,prev_id)
+          loop_for_ascend(nicr,prev_prev_id,prev_id) // here duplicated prev_id was wrong and also calling descend
+          // more similar to solidty code ?
+          //let next_id = Map.lookup_default(next_id, state.data.nodes, null_node()).prev_id  
+          //let prev_id = Map.lookup_default(next_id, state.data.nodes, null_node()).prev_id
+          //loop_for_descend(nicr,prev_id,next_id)
+  
+          
     /*
      * @dev Descend the list (larger NICRs to smaller NICRs) to find a valid insert position
      * @param _troveManager TroveManager contract, passed in as param to save SLOAD’s
@@ -362,9 +372,14 @@ contract SortedTroves =
       loop_for_descend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
       loop_for_descend(nicr,Some(prev_id),next_id) =
           //get the prev_id node's next_id
-          let next_id = Map.lookup_default(prev_id,state.data.nodes,null_node()).next_id
+          let next_next_id = Option.match(None, (next_id') => get_node(next_id').next_id)
           //and loop again
-          loop_for_descend(nicr,next_id,next_id)
+          loop_for_descend(nicr,next_id,next_next_id)
+          // more similar to solidty code ?
+          //let prev_id = Map.lookup_default(prev_id, state.data.nodes, null_node()).next_id
+          //let next_id = Map.lookup_default(prev_id, state.data.nodes, null_node()).next_id
+          //loop_for_descend(nicr,prev_id,next_id)
+   
 
     function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
         None => abort("no addresses")
