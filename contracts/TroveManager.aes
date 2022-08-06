@@ -22,7 +22,7 @@ contract TroveManager =
     // CONSTANTS
     //------------------------------------------------------------------------------
 
-    function seconds_in_one_minute() = 60
+    entrypoint seconds_in_one_minute() = 60
     /*
      * Half-life of 12h. 12h = 720 min
      * (1/2) = d^720 => d = (1/2)^(1/720)
@@ -94,6 +94,16 @@ contract TroveManager =
       | ClosedByOwner
       | ClosedByLiquidation
       | ClosedByRedemption
+
+    function
+      int_to_status: (int) => status
+      int_to_status  (0)   = NonExistent
+      int_to_status  (1)   = Active
+      int_to_status  (2)   = ClosedByOwner
+      int_to_status  (3)   = ClosedByLiquidation
+      int_to_status  (4)   = ClosedByRedemption
+      int_to_status  (_)   = abort("invalid status value")
+
 
     datatype trove_manager_operation
       = ApplyPendingRewards
@@ -329,7 +339,7 @@ contract TroveManager =
 
         let price = addresses.price_feed.fetch_price()
         let aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
-        let recovery_mode_at_start = check_recovery_mode(price)
+        let recovery_mode_at_start = check_recovery_mode'(price)
 
         // Perform the appropriate liquidation sequence - tally values and obtain their totals.
         let totals =
@@ -512,7 +522,7 @@ contract TroveManager =
     stateful entrypoint liquidate_troves(n: int) = with_addresses((addresses) =>
         let price = addresses.price_feed.fetch_price()
         let aeusd_in_stab_pool = addresses.stability_pool.get_total_aeusd_deposits()
-        let recovery_mode_at_start = check_recovery_mode(price)
+        let recovery_mode_at_start = check_recovery_mode'(price)
 
         // Perform the appropriate liquidation sequence - tally the values, and obtain their totals
         let get_totals =
@@ -769,7 +779,7 @@ contract TroveManager =
           // If ICR <= 100%, purely redistribute the Trove across all active Troves
           if(icr =< pct_100())
             move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
-            remove_stake(borrower)
+            remove_stake'(borrower)
 
             let single_liquidation = single_liquidation {
                 debt_to_offset = 0
@@ -777,14 +787,14 @@ contract TroveManager =
               , debt_to_redistribute = single_liquidation.entire_trove_debt
               , coll_to_redistribute = coll_to_liquidate
               }
-            close_trove(borrower, ClosedByLiquidation)
+            close_trove'(borrower, ClosedByLiquidation)
             emitEvents( single_liquidation.entire_trove_debt, single_liquidation.entire_trove_coll )
             single_liquidation
           else
             // If 100% < ICR < MCR, offset as much as possible, and redistribute the remainder
             if((icr > pct_100()) && (icr < mcr()))
               move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
-              remove_stake(borrower)
+              remove_stake'(borrower)
 
               let (debt_to_offset, coll_to_send_to_sp, debt_to_redistribute, coll_to_redistribute) =
                 get_offset_and_redistribution_vals(single_liquidation.entire_trove_debt, coll_to_liquidate, aeusd_in_stab_pool)
@@ -795,7 +805,7 @@ contract TroveManager =
                   , coll_to_redistribute = coll_to_redistribute
                   }
 
-              close_trove(borrower, ClosedByLiquidation)
+              close_trove'(borrower, ClosedByLiquidation)
               emitEvents(single_liquidation.entire_trove_debt, single_liquidation.entire_trove_coll)
               single_liquidation
             else
@@ -809,14 +819,14 @@ contract TroveManager =
                 move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
                 require(aeusd_in_stab_pool != 0,"TroveManager: aeusd_in_stab_pool is 0")
 
-                remove_stake(borrower)
+                remove_stake'(borrower)
                 let single_liquidation = get_capped_offset_vals(
                     single_liquidation.entire_trove_debt
                   , single_liquidation.entire_trove_coll
                   , price
                   )
 
-                close_trove(borrower, ClosedByLiquidation)
+                close_trove'(borrower, ClosedByLiquidation)
                 if (single_liquidation.coll_surplus > 0)
                     addresses.coll_surplus_pool.account_surplus(borrower, single_liquidation.coll_surplus)
 
@@ -836,7 +846,7 @@ contract TroveManager =
         let (entire_trove_debt, entire_trove_coll, pending_debt_reward, pending_coll_reward) = get_entire_debt_and_coll(borrower)
 
         move_pending_trove_rewards_to_active_pool(active_pool, default_pool, pending_debt_reward, pending_coll_reward)
-        remove_stake(borrower)
+        remove_stake'(borrower)
 
         let single_liquidation = init_liquidation_values(){
             entire_trove_debt = entire_trove_debt
@@ -856,7 +866,7 @@ contract TroveManager =
           , coll_to_redistribute = coll_to_redistribute
           }
 
-        close_trove(borrower, ClosedByLiquidation)
+        close_trove'(borrower, ClosedByLiquidation)
         emitLiquidateEvents(
             borrower
           , single_liquidation.entire_trove_debt
@@ -967,13 +977,22 @@ contract TroveManager =
       (debt,coll,pending_aeusd_debt_reward,pending_ae_reward)
 
     // Remove borrower's stake from the totalStakes sum, and set their stake to 0
-    stateful function remove_stake(borrower: address) =
+    stateful entrypoint remove_stake(borrower: address) =
+        require_caller_is_borrower_operations()
+        remove_stake'(borrower)
+
+    // Remove borrower's stake from the totalStakes sum, and set their stake to 0
+    stateful function remove_stake'(borrower: address) =
         put(state{
             total_stakes @ ts = SafeMath.sub(ts,state.troves[borrower].stake)
           , troves[ borrower ] @ t = t { stake = 0 }
           })
 
-    stateful function close_trove(borrower: address, closed_status: status) = with_addresses( (addresses) =>
+    stateful entrypoint close_trove(borrower: address) =
+        require_caller_is_borrower_operations()
+        close_trove'(borrower, ClosedByOwner)
+
+    stateful function close_trove'(borrower: address, closed_status: status) = with_addresses( (addresses) =>
         require(closed_status != NonExistent && closed_status != Active, "TroveManager: invalid status for closing trove")
 
         let trove_owners_array_length = List.length(state.trove_owners)
@@ -994,6 +1013,26 @@ contract TroveManager =
         remove_trove_owner(borrower, trove_owners_array_length)
         addresses.sorted_troves.remove(borrower)
       )
+
+    // Push the owner's address to the Trove owners list, and record the corresponding array index on the Trove struct
+    stateful entrypoint add_trove_owner_to_array(borrower: address) =
+        require_caller_is_borrower_operations()
+        add_trove_owner_to_array'(borrower)
+
+    stateful function add_trove_owner_to_array'(borrower: address): int =
+        /* Max array size is 2**128 - 1, i.e. ~3e30 troves. No risk of overflow, since troves have minimum AEUSD
+        debt of liquidation reserve plus MIN_NET_DEBT. 3e30 AEUSD dwarfs the value of all wealth in the world ( which is < 1e15 USD). */
+
+        // Record the index of the new Troveowner on their Trove struct
+        // it's not length - 1 because we are going to add a new one
+        let index = List.length( state.trove_owners )
+
+        // Push the Troveowner to the array
+        put( state {
+            trove_owners @ to = to ++ [borrower]
+          , troves[borrower] @ t = t { array_index = index }
+          })
+        index
 
     /*
     * Remove a Trove owner from the TroveOwners array, not preserving array order. Removing owner 'B' does the following:
@@ -1199,7 +1238,7 @@ contract TroveManager =
         // Save the address of the Trove preceding the current one, before potentially modifying the list
         let next_user_to_check = addresses.sorted_troves.get_prev(current_borrower)
 
-        apply_pending_rewards(addresses.active_pool, addresses.default_pool, current_borrower)
+        apply_pending_rewards'(addresses.active_pool, addresses.default_pool, current_borrower)
 
         let single_redemption = redeem_collateral_from_trove(
             addresses
@@ -1258,7 +1297,7 @@ contract TroveManager =
     * 2) increases the baseRate based on the amount redeemed, as a proportion of total supply
     */
     stateful function update_base_rate_from_redemption(ae_drawn: int, price: int, total_aeusd_supply: int): int =
-      let decayed_base_rate = calc_decayed_base_rate()
+      let decayed_base_rate = calc_decayed_base_rate'()
 
       /* Convert the drawn AE back to AEUSD at face value rate (1 AEUSD:1 USD), in order to get
       * the fraction of total supply that was redeemed at face value. */
@@ -1292,7 +1331,7 @@ contract TroveManager =
         calc_redemption_fee(get_redemption_rate_with_decay(), ae_drawn)
 
     entrypoint get_redemption_rate_with_decay(): int =
-        calc_redemption_rate(calc_decayed_base_rate())
+        calc_redemption_rate(calc_decayed_base_rate'())
 
     function calc_redemption_fee(redemption_rate: int, ae_drawn: int): int =
         let redemption_fee = SafeMath.div(redemption_rate*ae_drawn,Utils.decimal_precision())
@@ -1323,9 +1362,60 @@ contract TroveManager =
         } })
       Chain.event(TroveSnapshotsUpdated( state.l_ae, state.l_aeusd_debt))
 
+    // Updates the baseRate state variable based on time elapsed since the last redemption or LUSD borrowing operation.
+    stateful entrypoint decay_base_rate_from_borrowing() =
+        require_caller_is_borrower_operations()
+
+        let decayed_base_rate = calc_decayed_base_rate'()
+        // The baseRate can decay to 0
+        require(decayed_base_rate =< Utils.decimal_precision(),"TroveManager: invalid base_rate value")
+
+        put( state{ base_rate = decayed_base_rate  })
+        Chain.event(BaseRateUpdated(decayed_base_rate))
+
+        update_last_fee_op_time()
+
+    // --- Trove property setters, called by BorrowerOperations ---
+
+    stateful entrypoint set_trove_status(borrower: address, num: int) =
+        require_caller_is_borrower_operations()
+        put(state{ troves[borrower] @ t = t { status = int_to_status(num) } } )
+
+    stateful entrypoint increase_trove_coll(borrower: address, coll_increase: int): int =
+        require_caller_is_borrower_operations()
+        require(coll_increase >= 0,"TroveManager: coll_increase is negative")
+        let new_coll = state.troves[borrower].coll + coll_increase
+        put(state{ troves[borrower] @ t = t { coll = new_coll } } )
+        new_coll
+
+    stateful entrypoint decrease_trove_coll(borrower:address, coll_decrease: int): int =
+        require_caller_is_borrower_operations()
+        require(coll_decrease >= 0,"TroveManager: coll_decrease is negative")
+        let new_coll = SafeMath.sub(state.troves[borrower].coll,coll_decrease)
+        put(state{ troves[borrower] @ t = t { coll = new_coll } } )
+        new_coll
+
+    stateful entrypoint increase_trove_debt(borrower: address, debt_increase: int): int =
+        require_caller_is_borrower_operations()
+        require(debt_increase >= 0,"TroveManager: debt_increase is negative")
+        let new_debt = state.troves[borrower].debt + debt_increase
+        put(state{ troves[borrower] @ t = t { debt = new_debt } } )
+        new_debt
+
+    stateful entrypoint decrease_trove_debt(borrower: address, debt_decrease: int): int =
+        require_caller_is_borrower_operations()
+        require(debt_decrease >= 0,"TroveManager: debt_decrease is negative")
+        let new_debt = SafeMath.sub(state.troves[borrower].debt,debt_decrease)
+        put(state{ troves[borrower] @ t = t { debt = new_debt } } )
+        new_debt
+
     //------------------------------------------------------------------------------
     // STATELESS ENTRYPOINTS
     //------------------------------------------------------------------------------
+
+    entrypoint get_tcr(price: int): int = get_tcr'(price)
+
+    entrypoint check_recovery_mode(price: int): bool = check_recovery_mode'(price)
 
     entrypoint has_pending_rewards(borrower: address): bool =
         /*
@@ -1337,6 +1427,39 @@ contract TroveManager =
           false
         else
           Map.lookup_default(borrower,state.reward_snapshots,null_reward_snapshot()).ae < state.l_ae
+
+    entrypoint get_borrowing_fee(aeusd_debt: int): int =
+        calc_borrowing_fee'(get_borrowing_rate(), aeusd_debt)
+
+    entrypoint get_borrowing_fee_with_decay(aeusd_debt: int): int =
+        calc_borrowing_fee'(get_borrowing_rate_with_decay(), aeusd_debt)
+
+    function calc_borrowing_fee'(borrowing_rate: int, aeusd_debt: int): int =
+        SafeMath.div(borrowing_rate * aeusd_debt,Utils.decimal_precision())
+
+    entrypoint get_borrowing_rate(): int =
+        calc_borrowing_rate'(state.base_rate)
+
+    entrypoint get_borrowing_rate_with_decay(): int =
+        calc_borrowing_rate'(calc_decayed_base_rate'())
+
+    function calc_borrowing_rate'(base_rate: int): int =
+        LiquityMath.min(
+            borrowing_fee_floor() + base_rate
+          , max_borrowing_fee()
+          )
+
+    entrypoint get_trove_status(borrower: address): status =
+        state.troves[borrower].status
+
+    entrypoint get_trove_stake(borrower: address): int =
+        state.troves[borrower].stake
+
+    entrypoint getTroveDebt(borrower: address): int =
+        state.troves[borrower].debt
+
+    entrypoint get_trove_coll(borrower: address): int =
+        state.troves[borrower].coll
 
     //------------------------------------------------------------------------------
     // CONSTRAINTS
@@ -1376,7 +1499,7 @@ contract TroveManager =
         require( amount > 0, "TroveManager: Amount must be greater than zero")
 
     function require_tcr_over_mcr(price: int) =
-        require(get_tcr(price) >= mcr(), "TroveManager: Cannot redeem when TCR < MCR")
+        require(get_tcr'(price) >= mcr(), "TroveManager: Cannot redeem when TCR < MCR")
 
     function require_after_bootstrap_period() = with_addresses((addresses) =>
         let system_deployment_time = addresses.lqty_token.get_deployment_start_time()
@@ -1390,12 +1513,17 @@ contract TroveManager =
         "Max fee percentage must be between 0.5% and 100%"
       )
 
+    stateful entrypoint apply_pending_rewards(borrower: address) = with_addresses((addresses) =>
+        require_caller_is_borrower_operations()
+        apply_pending_rewards'(addresses.active_pool, addresses.default_pool, borrower)
+      )
+
     //------------------------------------------------------------------------------
     // UTILS
     //------------------------------------------------------------------------------
 
     // Add the borrowers's coll and debt rewards earned from redistributions, to their Trove
-    stateful function apply_pending_rewards(active_pool: IActivePool, default_pool: IDefaultPool, borrower: address) =
+    stateful function apply_pending_rewards'(active_pool: IActivePool, default_pool: IDefaultPool, borrower: address) =
         if (has_pending_rewards(borrower))
           require_trove_is_active(borrower)
           // Compute pending rewards
@@ -1446,8 +1574,8 @@ contract TroveManager =
 
       if (new_debt == aeusd_gas_compensation())
           // No debt left in the Trove (except for the liquidation reserve), therefore the trove gets closed
-          remove_stake(borrower)
-          close_trove(borrower, ClosedByRedemption)
+          remove_stake'(borrower)
+          close_trove'(borrower, ClosedByRedemption)
           redeem_close_trove(addresses, borrower, new_debt, new_coll)
           Chain.event(TroveUpdated(
                 borrower
@@ -1476,7 +1604,7 @@ contract TroveManager =
               , lower_partial_redemption_hint )
 
             put( state { troves[borrower] @ t = t { debt = new_debt, coll = new_coll } })
-            update_stake_and_total_stakes(borrower)
+            update_stake_and_total_stakes'(borrower)
 
             Chain.event(TroveUpdated(
                   borrower
@@ -1487,8 +1615,12 @@ contract TroveManager =
                 ) )
             single_redemption
 
+    stateful entrypoint update_stake_and_total_stakes(borrower: address) =
+        require_caller_is_borrower_operations()
+        update_stake_and_total_stakes'(borrower)
+
     // Update borrower's stake based on their latest collateral value
-    stateful function update_stake_and_total_stakes(borrower: address): int =
+    stateful function update_stake_and_total_stakes'(borrower: address): int =
         let trove = state.troves[borrower]
         let new_stake = compute_new_stake(trove.coll)
         let old_stake = trove.stake
@@ -1532,7 +1664,7 @@ contract TroveManager =
         addresses.coll_surplus_pool.account_surplus(borrower, ae)
         addresses.active_pool.send_ae(addresses.coll_surplus_pool.address, ae)
 
-    function calc_decayed_base_rate(): int =
+    function calc_decayed_base_rate'(): int =
         let minutes_passed = minutes_passed_since_last_fee_op()
         let decay_factor = LiquityMath.dec_pow(minute_decay_factor(), minutes_passed)
 

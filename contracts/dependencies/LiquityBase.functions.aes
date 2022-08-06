@@ -52,14 +52,14 @@
             SafeMath.add(active_coll,closed_debt)
         )
 
-    function get_tcr(price: int): int =
+    function get_tcr'(price: int): int =
         let entire_system_coll = get_entire_system_coll()
         let entire_system_debt = get_entire_system_debt()
 
         LiquityMath.compute_cr(entire_system_coll, entire_system_debt, price)
 
-    function check_recovery_mode(price: int): bool =
-        get_tcr(price) < ccr()
+    function check_recovery_mode'(price: int): bool =
+        get_tcr'(price) < ccr()
 
     function require_user_accepts_fee(fee: int, amount: int,max_fee_percentage: int) =
         let fee_percentage = SafeMath.div(fee * Utils.decimal_precision(),amount)
