@@ -136,7 +136,7 @@ contract BorrowerOperations =
                     , array_index = 0
                     }
 
-            let is_recovery_mode: bool = check_recovery_mode(vars.price)
+            let is_recovery_mode: bool = check_recovery_mode'(vars.price)
 
             require_valid_max_fee_percentage(max_fee_percentage, is_recovery_mode)
             require_troveis_not_active(addresses.trove_manager, Call.caller)
@@ -283,7 +283,7 @@ contract BorrowerOperations =
                 , stake = 0
                 }
 
-            let is_recovery_mode = check_recovery_mode(vars.price)
+            let is_recovery_mode = check_recovery_mode'(vars.price)
 
             if (is_debt_increase)
                 require_valid_max_fee_percentage(max_fee_percentage, is_recovery_mode)
@@ -538,7 +538,7 @@ contract BorrowerOperations =
         require(aeusd_change > 0, "BorrowerOps: Debt increase requires non-zero debtChange")
 
     function require_not_in_recovery_mode(price: int) =
-        require(check_recovery_mode(price), "BorrowerOps: Operation not permitted during Recovery Mode")
+        require(check_recovery_mode'(price), "BorrowerOps: Operation not permitted during Recovery Mode")
 
     function require_no_coll_withdrawal(coll_withdrawal: int) =
         require(coll_withdrawal == 0, "BorrowerOps: Collateral withdrawal not permitted Recovery Mode")
