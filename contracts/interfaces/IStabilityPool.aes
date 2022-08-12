@@ -99,7 +99,7 @@ contract interface IStabilityPool =
      * - Sends the tagged front end's accumulated LQTY gains to the tagged front end
      * - Increases deposit and tagged front end's stake, and takes new snapshots for each.
      */
-    stateful entrypoint provide_to_sp: (int /*amount*/, address /*frontEndTag*/) => unit
+    stateful entrypoint provide_to_sp: (int /*amount*/, option(address) /*frontEndTag*/) => unit
 
     /*
      * Initial checks:
