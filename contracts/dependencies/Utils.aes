@@ -4,24 +4,29 @@ namespace Utils =
     function decimal_precision() = 1000000000000000000 //1e18;
 
     function zero_address(): address =
-        //TODO: replace with zero_address
-        // abort("zero_address not implemented")
-        /*"ct_NhbxN8wg8NLkGuzwRNDQhMDKSKBwDAQgxQawK7tkigi2aC7i9"*/
-        Contract.address
+      //TODO: replace with zero_address or maybe try to use option(address)
+      // abort("zero_address not implemented")
+      /*"ct_NhbxN8wg8NLkGuzwRNDQhMDKSKBwDAQgxQawK7tkigi2aC7i9"*/
+      Contract.address
 
     function
-        addIntToPayload: (string, int) => string
-        addIntToPayload("", x) = Int.to_str(x)
-        addIntToPayload(acc, x) = String.concat( String.concat(acc, "|"), Int.to_str(x) )
+      addIntToPayload: (string, int) => string
+      addIntToPayload("", x) = Int.to_str(x)
+      addIntToPayload(acc, x) = String.concat( String.concat(acc, "|"), Int.to_str(x) )
 
     function xsToPayload'(xs: list(int),acc: string): string =
-        List.foldl(addIntToPayload, acc, xs)
+      List.foldl(addIntToPayload, acc, xs)
 
     function xsToPayload(xs: list(int)): string =
-        xsToPayload'(xs,"")
+      xsToPayload'(xs,"")
 
     function
-        concat_xs: (list(string)) => string
-        concat_xs([]) = ""
-        concat_xs(x::xs) = String.concat(x, concat_xs(xs))
+      concat_xs: (list(string)) => string
+      concat_xs([]) = ""
+      concat_xs(x::xs) = String.concat(x, concat_xs(xs))
+
+    function
+      optional_address_to_str: (option(address)) => string
+      optional_address_to_str(None) = ""
+      optional_address_to_str(Some(address)) = Address.to_str(address)
 
