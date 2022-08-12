@@ -171,10 +171,18 @@ contract StabilityPool =
         kickback_rate: int
       , registered: bool
       }
+    function no_front_end(): front_end = {
+        kickback_rate = 0
+      , registered = false
+      }
 
     record deposit = {
         initial_value: int
-      , front_end_tag: address
+      , front_end_tag: option(address)
+      }
+    function no_deposit(): deposit = {
+        initial_value = 0
+      , front_end_tag = None
       }
 
     record snapshots = {
@@ -183,6 +191,14 @@ contract StabilityPool =
       , g: int
       , scale: int
       , epoch: int
+      }
+
+    function no_snapshots(): snapshots = {
+        s = 0
+      , p = 0
+      , g = 0
+      , scale = 0
+      , epoch = 0
       }
 
     record state = {
@@ -215,7 +231,7 @@ contract StabilityPool =
       * - The inner mapping records the sum S at different scales
       * - The outer mapping records the (scale => sum) mappings, for different epochs.
       */
-      , epoch_to_scale_to_sum: map(int,map(int,int))
+      , epoch_to_scale_to_sum: map((int*int),int)
 
       /*
       * Similarly, the sum 'G' is used to calculate LQTY gains. During it's lifetime, each deposit d_t earns a LQTY gain of
@@ -224,7 +240,7 @@ contract StabilityPool =
       *  LQTY reward events occur are triggered by depositor operations (new deposit, topup, withdrawal), and liquidations.
       *  In each case, the LQTY reward is issued (i.e. G is updated), before other state changes are made.
       */
-      , epoch_to_scale_to_g: map(int,map(int,int))
+      , epoch_to_scale_to_g: map(int*int,int)
       // Error tracker for the error correction in the LQTY issuance calculation
       , last_lqty_error: int
       // Error trackers for the error correction in the offset calculation
@@ -306,11 +322,11 @@ contract StabilityPool =
         * If the gain spans no scale change, the second portion will be 0.
         */
         let first_portion = SafeMath.sub(
-            state.epoch_to_scale_to_sum[snapshots.epoch][snapshots.scale]
+            state.epoch_to_scale_to_sum[(snapshots.epoch,snapshots.scale)]
           , snapshots.s
           )
         let second_portion = SafeMath.div(
-            state.epoch_to_scale_to_sum[snapshots.epoch][SafeMath.add(snapshots.scale,1)]
+            state.epoch_to_scale_to_sum[(snapshots.epoch,SafeMath.add(snapshots.scale,1))]
           , scale_factor()
           )
 
@@ -321,6 +337,345 @@ contract StabilityPool =
               )
           , Utils.decimal_precision()
           )
+
+    /*
+    * Return the LQTY gain earned by the front end. Given by the formula:  E = D0 * (G - G(0))/P(0)
+    * where G(0) and P(0) are the depositor's snapshots of the sum G and product P, respectively.
+    *
+    * D0 is the last recorded value of the front end's total tagged deposits.
+    */
+    entrypoint get_front_end_lqty_gain(front_end: address): int =
+        let front_end_stake = Map.lookup_default(front_end,state.front_end_stakes,0)
+        if (front_end_stake == 0) 0
+        else
+          let kickback_rate = Map.lookup_default(front_end,state.front_ends,no_front_end()).kickback_rate
+          let front_end_share = SafeMath.sub(Utils.decimal_precision(),kickback_rate)
+
+          //TODO: be sure this should revert if no snapshot entry
+          let snapshots = state.front_end_snapshots[front_end]
+
+          SafeMath.div(
+              front_end_share * get_lqty_gain_from_snapshots(front_end_stake, snapshots)
+            , Utils.decimal_precision()
+            )
+
+    function get_lqty_gain_from_snapshots(initial_stake: int, snapshots: snapshots): int =
+       /*
+        * Grab the sum 'G' from the epoch at which the stake was made. The LQTY gain may span up to one scale change.
+        * If it does, the second portion of the LQTY gain is scaled by 1e9.
+        * If the gain spans no scale change, the second portion will be 0.
+        */
+        let epoch_snapshot = snapshots.epoch
+        let scale_snapshot = snapshots.scale
+        let g_snapshot = snapshots.g
+        let p_snapshot = snapshots.p
+
+        let first_portion = SafeMath.sub(
+            state.epoch_to_scale_to_g[(epoch_snapshot , scale_snapshot)]
+          , g_snapshot
+          )
+        let second_portion = SafeMath.div(
+            state.epoch_to_scale_to_g[(epoch_snapshot , scale_snapshot + 1)]
+          , scale_factor()
+          )
+
+        SafeMath.div(
+            SafeMath.div(
+                initial_stake * SafeMath.add(first_portion,second_portion)
+              , p_snapshot
+              )
+          , Utils.decimal_precision()
+          )
+
+    /*
+    * Calculate the LQTY gain earned by a deposit since its last snapshots were taken.
+    * Given by the formula:  LQTY = d0 * (G - G(0))/P(0)
+    * where G(0) and P(0) are the depositor's snapshots of the sum G and product P, respectively.
+    * d0 is the last recorded deposit value.
+    */
+    entrypoint get_depositor_lqty_gain(depositor: address): int =
+        switch(Map.lookup(depositor,state.deposits))
+          None => 0
+          Some(deposit) | deposit.initial_value == 0 => 0
+          Some(deposit) =>
+            /*
+            * If not tagged with a front end, the depositor gets a 100% cut of what their deposit earned.
+            * Otherwise, their cut of the deposit's earnings is equal to the kickbackRate, set by the front end through
+            * which they made their deposit.
+            */
+            let kickback_rate = switch(deposit.front_end_tag)
+              None => Utils.decimal_precision()
+              //TODO: is this partial evaluation ok?
+              Some(front_end_tag) => state.front_ends[front_end_tag].kickback_rate
+
+            let snapshots = state.deposit_snapshots[depositor]
+
+            SafeMath.div(
+                kickback_rate * get_lqty_gain_from_snapshots(deposit.initial_value, snapshots)
+              , Utils.decimal_precision()
+              )
+
+    //------------------------------------------------------------------------------
+    // EXTERNAL DEPOSITOR FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    /*  provide_to_sp():
+    *
+    * - Triggers a LQTY issuance, based on time passed since the last issuance.
+    *   The LQTY issuance is shared between *all* depositors and front ends
+    * - Tags the deposit with the provided front end tag param, if it's a new deposit
+    * - Sends depositor's accumulated gains (LQTY, AE) to depositor
+    * - Sends the tagged front end's accumulated LQTY gains to the tagged front end
+    * - Increases deposit and tagged front end's stake, and takes new snapshots for each.
+    */
+    stateful entrypoint provide_to_sp(amount: int, front_end_tag: option(address)) = with_addresses((addresses) =>
+        require_front_end_is_registered_or_zero(front_end_tag)
+        require_front_end_not_registered(Call.caller)
+        require_non_zero_amount(amount)
+
+        let initial_deposit = switch(Map.lookup(Call.caller,state.deposits))
+          None => 0
+          Some(deposit) => deposit.initial_value
+
+        trigger_lqty_issuance(addresses.community_issuance)
+
+        if (initial_deposit == 0) set_front_end_tag(Call.caller, front_end_tag)
+        let depositor_ae_gain = get_depositor_ae_gain(Call.caller)
+        let compounded_aeusd_deposit = get_compounded_aeusd_deposit(Call.caller)
+        let aeusd_loss = SafeMath.sub(initial_deposit,compounded_aeusd_deposit) // Needed only for event log
+
+        // First pay out any LQTY gains
+        let front_end_opt = Map.lookup_default(Call.caller,state.deposits,no_deposit()).front_end_tag
+        pay_out_lqty_gains(addresses.community_issuance, Call.caller, front_end_opt)
+
+        // Update front end stake
+
+        switch(front_end_opt)
+          None => ()
+          Some(front_end) =>
+            let compounded_front_end_stake =  get_compounded_front_end_stake(front_end)
+            let new_front_end_stake = SafeMath.add(compounded_front_end_stake,amount)
+            update_front_end_stake_and_snapshots(front_end, new_front_end_stake)
+            Chain.event(FrontEndStakeChanged(front_end, new_front_end_stake, Call.caller))
+
+        send_aeusd_to_stability_pool(Call.caller, amount)
+
+        let new_deposit = SafeMath.add(compounded_aeusd_deposit,amount)
+        update_deposit_and_snapshots(Call.caller, new_deposit)
+        Chain.event(UserDepositChanged(Call.caller, new_deposit))
+
+        Chain.event(AEGainWithdrawn(Call.caller, depositor_ae_gain, aeusd_loss)) // AEUSD Loss required for event log
+
+        send_ae_gain_to_depositor(depositor_ae_gain)
+      )
+
+    //------------------------------------------------------------------------------
+    // SENDER FUNCTIONS FOR AEUSD DEPOSIT, AE GAINS AND LQTY GAINS
+    //------------------------------------------------------------------------------
+
+    stateful function send_aeusd_to_stability_pool(address: address, amount: int) = with_addresses((addresses) =>
+        addresses.aeusd_token.send_to_pool(address, Contract.address, amount)
+        let new_total_aeusd_deposits = SafeMath.add(state.total_aeusd_deposits,amount)
+        put(state{ total_aeusd_deposits = new_total_aeusd_deposits })
+        Chain.event(StabilityPoolAEUSDBalanceUpdated(new_total_aeusd_deposits))
+      )
+
+    stateful function
+      send_ae_gain_to_depositor: (int /*amount*/) => unit
+      send_ae_gain_to_depositor(0) = ()
+      send_ae_gain_to_depositor(amount) =
+        let new_ae = SafeMath.sub(state.ae,amount)
+        put(state{ae = new_ae})
+        Chain.event(StabilityPoolAEBalanceUpdated(new_ae))
+        Chain.event(AESent(Call.caller, amount))
+
+        Chain.spend(Call.caller,amount)
+
+    //------------------------------------------------------------------------------
+    // EXTERNAL FRONT END FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    stateful function update_front_end_stake_and_snapshots(front_end: address, new_value: int) =
+        put(state{ front_end_stakes[front_end] = new_value })
+
+        if (new_value == 0)
+            put(state{ front_end_snapshots @ t = Map.delete(front_end,t) })
+            Chain.event(FrontEndSnapshotUpdated(front_end, 0, 0))
+        else
+          let current_scale = state.current_scale
+          let current_epoch = state.current_epoch
+          let current_p = state.p
+
+          // Get G for the current epoch and current scale
+          let current_g = Map.lookup_default((current_epoch,current_scale), state.epoch_to_scale_to_g, 0)
+
+          // Record new snapshots of the latest running product P and sum G for the front end
+          put(state{ front_end_snapshots[front_end = no_snapshots()] @ s = s {
+              p = current_p
+            , g = current_g
+            , scale = current_scale
+            , epoch = current_epoch
+            }})
+
+          Chain.event(FrontEndSnapshotUpdated(front_end, current_p, current_g))
+
+    //------------------------------------------------------------------------------
+    // LQTY ISSUANCE FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    stateful function trigger_lqty_issuance(community_issuance: ICommunityIssuance) =
+      let lqty_issuance = community_issuance.issue_lqty()
+      update_g(lqty_issuance)
+
+    stateful function
+      update_g: (int /*lqty_issuance */) => unit
+      /*
+      * When total deposits is 0, G is not updated. In this case, the LQTY issued can not be obtained by later
+      * depositors - it is missed out on, and remains in the balanceof the CommunityIssuance contract.
+      *
+      */
+      update_g(lqty_issuance) | state.total_aeusd_deposits == 0 || lqty_issuance == 0 = ()
+      update_g(lqty_issuance) =
+        let lqty_per_unit_staked =compute_lqty_per_unit_staked(lqty_issuance, state.total_aeusd_deposits)
+
+        let marginal_lqty_gain = lqty_per_unit_staked * state.p
+
+        let (current_epoch,current_scale) = (state.current_epoch,state.current_scale)
+        let key = (current_epoch,current_scale)
+        put(state{ epoch_to_scale_to_g[key = 0] @ t = SafeMath.add(t,marginal_lqty_gain)})
+
+        Chain.event(G_Updated(state.epoch_to_scale_to_g[key], current_epoch, current_scale))
+
+    stateful function compute_lqty_per_unit_staked(lqty_issuance: int, total_aeusd_deposits: int) =
+        /*
+        * Calculate the LQTY-per-unit staked.  Division uses a "feedback" error correction, to keep the
+        * cumulative error low in the running total G:
+        *
+        * 1) Form a numerator which compensates for the floor division error that occurred the last time this
+        * function was called.
+        * 2) Calculate "per-unit-staked" ratio.
+        * 3) Multiply the ratio back by its denominator, to reveal the current floor division error.
+        * 4) Store this error for use in the next correction when this function is called.
+        * 5) Note: static analysis tools complain about this "division before multiplication", however, it is intended.
+        */
+        let lqty_numerator = SafeMath.add(lqty_issuance*Utils.decimal_precision(),state.last_lqty_error)
+
+        let lqty_per_unit_staked = SafeMath.div(lqty_numerator,total_aeusd_deposits)
+        put(state{ last_lqty_error = SafeMath.sub(lqty_numerator,lqty_per_unit_staked * total_aeusd_deposits) })
+
+        lqty_per_unit_staked
+
+    //------------------------------------------------------------------------------
+    // STABILITY POOL DEPOSIT FUNCTIONALITY
+    //------------------------------------------------------------------------------
+
+    stateful function set_front_end_tag(depositor: address, front_end_tag: option(address)) =
+        put(state{ deposits[depositor = no_deposit()] @ d = d { front_end_tag = front_end_tag}})
+        Chain.event(FrontEndTagSet(depositor, Utils.optional_address_to_str(front_end_tag)))
+
+    function pay_out_lqty_gains(community_issuance: ICommunityIssuance, depositor: address, front_end_opt: option(address)) =
+        Option.map(
+            (front_end) =>
+              let front_end_lqty_gain = get_front_end_lqty_gain(front_end)
+              community_issuance.send_lqty(front_end, front_end_lqty_gain)
+              Chain.event( LQTYPaidToFrontEnd(front_end, front_end_lqty_gain) )
+          , front_end_opt
+          )
+
+        // Pay out depositor's LQTY gain
+        let depositor_lqty_gain = get_depositor_lqty_gain(depositor)
+        community_issuance.send_lqty(depositor, depositor_lqty_gain)
+        Chain.event(LQTYPaidToDepositor(depositor, depositor_lqty_gain))
+
+    stateful function update_deposit_and_snapshots(depositor: address, new_value: int) =
+        put(state{ deposits[depositor = no_deposit()] @ d = d { initial_value = new_value}})
+
+        if (new_value == 0)
+          put(state{ deposits[depositor ] @ d = d { front_end_tag = None }})
+          put(state{ deposit_snapshots @ d = Map.delete(depositor,d) })
+          Chain.event(DepositSnapshotUpdated(depositor, Utils.xsToPayload([0, 0, 0])))
+        else
+          let current_scale = state.current_scale
+          let current_epoch = state.current_epoch
+          let current_p = state.p
+
+          // Get S and G for the current epoch and current scale
+          let current_s = Map.lookup_default((current_epoch,current_scale),state.epoch_to_scale_to_sum,0)
+          let current_g = Map.lookup_default((current_epoch,current_scale),state.epoch_to_scale_to_g,0)
+
+          // Record new snapshots of the latest running product P, sum S, and sum G, for the depositor
+          put(state{ deposit_snapshots[depositor] = {
+              p = current_p
+            , s = current_s
+            , g = current_g
+            , scale = current_scale
+            , epoch = current_epoch
+            }})
+
+          Chain.event(DepositSnapshotUpdated(depositor, Utils.xsToPayload([current_p, current_s, current_g])))
+
+    //------------------------------------------------------------------------------
+    // COMPOUNDED DEPOSIT AND COMPOUNDED FRONT END STAKE
+    //------------------------------------------------------------------------------
+
+    /*
+    * Return the user's compounded deposit. Given by the formula:  d = d0 * P/P(0)
+    * where P(0) is the depositor's snapshot of the product P, taken when they last updated their deposit.
+    */
+    function get_compounded_aeusd_deposit(depositor: address): int =
+        let initial_deposit = Map.lookup_default(depositor,state.deposits,no_deposit()).initial_value
+        if(initial_deposit == 0) 0
+        else
+          let snapshots = state.deposit_snapshots[depositor]
+          get_compounded_stake_from_snapshots(initial_deposit, snapshots)
+
+    /*
+    * Return the front end's compounded stake. Given by the formula:  D = D0 * P/P(0)
+    * where P(0) is the depositor's snapshot of the product P, taken at the last time
+    * when one of the front end's tagged deposits updated their deposit.
+    *
+    * The front end's compounded stake is equal to the sum of its depositors' compounded deposits.
+    */
+    entrypoint get_compounded_front_end_stake(front_end: address): int =
+        let front_end_stake = Map.lookup_default(front_end,state.front_end_stakes,0)
+        if(front_end_stake == 0) 0
+        else
+          let snapshots = state.front_end_snapshots[front_end]
+          get_compounded_stake_from_snapshots(front_end_stake, snapshots)
+
+    // Internal function, used to calculcate compounded deposits and compounded front end stakes.
+    function get_compounded_stake_from_snapshots( initial_stake: int, snapshots: snapshots ): int =
+        let scale_snapshot = snapshots.scale
+        let epoch_snapshot = snapshots.epoch
+
+        // If stake was made before a pool-emptying event, then it has been fully cancelled with debt -- so, return 0
+        if (epoch_snapshot < state.current_epoch) 0
+        else
+          let scale_diff = SafeMath.sub(state.current_scale, scale_snapshot)
+          /* Compute the compounded stake. If a scale change in P was made during the stake's lifetime,
+          * account for it. If more than one scale change was made, then the stake has decreased by a factor of
+          * at least 1e-9 -- so return 0.
+          */
+          let compounded_stake =
+            if (scale_diff == 0) SafeMath.div(initial_stake * state.p, snapshots.p)
+            else
+              if (scale_diff == 1) SafeMath.div(
+                    SafeMath.div(initial_stake * state.p, snapshots.p)
+                  , scale_factor()
+                  )
+              else 0 // if scaleDiff >= 2
+
+          /*
+          * If compounded deposit is less than a billionth of the initial deposit, return 0.
+          *
+          * NOTE: originally, this line was in place to stop rounding errors making the deposit too large. However, the error
+          * corrections should ensure the error in P "favors the Pool", i.e. any given compounded deposit should slightly less
+          * than it's theoretical value.
+          *
+          * Thus it's unclear whether this line is still really needed.
+          */
+          if (compounded_stake < SafeMath.div(initial_stake, 1000000000)) 0
+          else compounded_stake
 
     //------------------------------------------------------------------------------
     // CONSTRAINTS
@@ -405,7 +760,7 @@ contract StabilityPool =
       | ScaleUpdated(int /*currentScale*/)
 
       | FrontEndRegistered(address /*frontEnd*/, int /*kickbackRate*/)
-      | FrontEndTagSet(address /*depositor*/, address /*frontEnd*/)
+      | FrontEndTagSet(address /*depositor*/, string /*frontEnd: option(address)*/)
 
       | DepositSnapshotUpdated(
             address /*depositor*/

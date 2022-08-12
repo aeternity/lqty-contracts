@@ -10,11 +10,11 @@ contract interface ICommunityIssuance =
 
     // --- Functions ---
 
-    stateful entrypoint setAddresses: (
+    stateful entrypoint set_addresses: (
           address /*lqtyTokenAddress*/
         , address /*stabilityPoolAddress*/
         ) => unit
 
-    entrypoint issueLQTY: () => int
+    entrypoint issue_lqty: () => int
 
-    stateful entrypoint sendLQTY: (address /*_account*/, int /*_LQTYamount*/) => unit
+    stateful entrypoint send_lqty: (address /*_account*/, int /*_LQTYamount*/) => unit
