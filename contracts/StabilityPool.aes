@@ -469,6 +469,56 @@ contract StabilityPool =
         send_ae_gain_to_depositor(depositor_ae_gain)
       )
 
+    /*  withdrawFromSP():
+    *
+    * - Triggers a LQTY issuance, based on time passed since the last issuance. The LQTY issuance is shared between *all* depositors and front ends
+    * - Removes the deposit's front end tag if it is a full withdrawal
+    * - Sends all depositor's accumulated gains (LQTY, AE) to depositor
+    * - Sends the tagged front end's accumulated LQTY gains to the tagged front end
+    * - Decreases deposit and tagged front end's stake, and takes new snapshots for each.
+    *
+    * If _amount > userDeposit, the user withdraws all of their compounded deposit.
+    */
+    stateful entrypoint withdraw_from_sp(amount: int) = with_addresses((addresses) =>
+        if (amount != 0) require_no_under_collateralized_troves()
+        //we use lookup_default because we wan't a more expressive
+        // message error in case require_user_has_deposit fails
+        let initial_deposit = Map.lookup_default(Call.caller,state.deposits,no_deposit()).initial_value
+        require_user_has_deposit(initial_deposit)
+
+        trigger_lqty_issuance(addresses.community_issuance)
+
+        let depositor_ae_gain = get_depositor_ae_gain(Call.caller)
+
+        let compounded_aeusd_deposit = get_compounded_aeusd_deposit(Call.caller)
+        let aeusd_to_withdraw = LiquityMath.min(amount, compounded_aeusd_deposit)
+        let aeusd_loss = SafeMath.sub(initial_deposit,compounded_aeusd_deposit) // Needed only for event log
+
+        // First pay out any LQTY gains
+        let front_end_opt = state.deposits[Call.caller].front_end_tag
+        pay_out_lqty_gains(addresses.community_issuance, Call.caller, front_end_opt)
+
+        // Update front end stake
+        switch(front_end_opt)
+          None => ()
+          Some(front_end) =>
+            let compounded_front_end_stake = get_compounded_front_end_stake(front_end)
+            let new_front_end_stake = SafeMath.sub(compounded_front_end_stake,aeusd_to_withdraw)
+            update_front_end_stake_and_snapshots(front_end, new_front_end_stake)
+            Chain.event(FrontEndStakeChanged(front_end, new_front_end_stake, Call.caller))
+
+        send_aeusd_to_depositor(Call.caller, aeusd_to_withdraw)
+
+        // Update deposit
+        let new_deposit = SafeMath.sub(compounded_aeusd_deposit,aeusd_to_withdraw)
+        update_deposit_and_snapshots(Call.caller, new_deposit)
+        Chain.event(UserDepositChanged(Call.caller, new_deposit))
+
+        Chain.event(AEGainWithdrawn(Call.caller, depositor_ae_gain, aeusd_loss))  // AEUSD Loss required for event log
+
+        send_ae_gain_to_depositor(depositor_ae_gain)
+      )
+
     //------------------------------------------------------------------------------
     // SENDER FUNCTIONS FOR AEUSD DEPOSIT, AE GAINS AND LQTY GAINS
     //------------------------------------------------------------------------------
@@ -490,6 +540,15 @@ contract StabilityPool =
         Chain.event(AESent(Call.caller, amount))
 
         Chain.spend(Call.caller,amount)
+
+    // Send AEUSD to user and decrease AEUSD in Pool
+    stateful function
+      send_aeusd_to_depositor: (address /*depositor*/, int /*aeusd_withdrawal*/) => unit
+      send_aeusd_to_depositor(_,0) = ()
+      send_aeusd_to_depositor(depositor,aeusd_withdrawal) = with_addresses((addresses) =>
+          addresses.aeusd_token.return_from_pool(Contract.address, depositor, aeusd_withdrawal)
+          decrease_aeusd(aeusd_withdrawal)
+        )
 
     //------------------------------------------------------------------------------
     // EXTERNAL FRONT END FUNCTIONS
@@ -518,6 +577,15 @@ contract StabilityPool =
             }})
 
           Chain.event(FrontEndSnapshotUpdated(front_end, current_p, current_g))
+
+    //------------------------------------------------------------------------------
+    // liquidation functions
+    //------------------------------------------------------------------------------
+
+    stateful function decrease_aeusd(amount: int) =
+        let new_total_aeusd_deposits = SafeMath.sub(state.total_aeusd_deposits,amount)
+        put(state{ total_aeusd_deposits = new_total_aeusd_deposits })
+        Chain.event(StabilityPoolAEUSDBalanceUpdated(new_total_aeusd_deposits))
 
     //------------------------------------------------------------------------------
     // LQTY ISSUANCE FUNCTIONS
