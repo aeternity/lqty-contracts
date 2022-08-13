@@ -740,30 +740,15 @@ contract StabilityPool =
     // EXTERNAL FRONT END FUNCTIONS
     //------------------------------------------------------------------------------
 
-    stateful function update_front_end_stake_and_snapshots(front_end: address, new_value: int) =
-        put(state{ front_end_stakes[front_end] = new_value })
+    // Front end makes a one-time selection of kickback rate upon registering
+    stateful entrypoint register_front_end(kickback_rate: int) =
+        require_front_end_not_registered(Call.caller)
+        require_user_has_no_deposit(Call.caller)
+        require_valid_kickback_rate(kickback_rate)
 
-        if (new_value == 0)
-            put(state{ front_end_snapshots @ t = Map.delete(front_end,t) })
-            Chain.event(FrontEndSnapshotUpdated(front_end, 0, 0))
-        else
-          let current_scale = state.current_scale
-          let current_epoch = state.current_epoch
-          let current_p = state.p
+        put(state{ front_ends[Call.caller] = { kickback_rate = kickback_rate , registered = true }})
 
-          // Get G for the current epoch and current scale
-          let current_g = Map.lookup_default((current_epoch,current_scale), state.epoch_to_scale_to_g, 0)
-
-          // Record new snapshots of the latest running product P and sum G for the front end
-          put(state{ front_end_snapshots[front_end = no_snapshots()] @ s = s {
-              p = current_p
-            , g = current_g
-            , scale = current_scale
-            , epoch = current_epoch
-            }})
-
-          Chain.event(FrontEndSnapshotUpdated(front_end, current_p, current_g))
-
+        Chain.event(FrontEndRegistered(Call.caller, kickback_rate))
 
     //------------------------------------------------------------------------------
     // LQTY ISSUANCE FUNCTIONS
@@ -859,6 +844,30 @@ contract StabilityPool =
             }})
 
           Chain.event(DepositSnapshotUpdated(depositor, Utils.xsToPayload([current_p, current_s, current_g])))
+
+    stateful function update_front_end_stake_and_snapshots(front_end: address, new_value: int) =
+        put(state{ front_end_stakes[front_end] = new_value })
+
+        if (new_value == 0)
+            put(state{ front_end_snapshots @ t = Map.delete(front_end,t) })
+            Chain.event(FrontEndSnapshotUpdated(front_end, 0, 0))
+        else
+          let current_scale = state.current_scale
+          let current_epoch = state.current_epoch
+          let current_p = state.p
+
+          // Get G for the current epoch and current scale
+          let current_g = Map.lookup_default((current_epoch,current_scale), state.epoch_to_scale_to_g, 0)
+
+          // Record new snapshots of the latest running product P and sum G for the front end
+          put(state{ front_end_snapshots[front_end = no_snapshots()] @ s = s {
+              p = current_p
+            , g = current_g
+            , scale = current_scale
+            , epoch = current_epoch
+            }})
+
+          Chain.event(FrontEndSnapshotUpdated(front_end, current_p, current_g))
 
     //------------------------------------------------------------------------------
     // COMPOUNDED DEPOSIT AND COMPOUNDED FRONT END STAKE
