@@ -571,6 +571,141 @@ contract StabilityPool =
       )
 
     //------------------------------------------------------------------------------
+    // LIQUIDATION FUNCTIONS
+    //------------------------------------------------------------------------------
+
+    /*
+    * Cancels out the specified debt against the AEUSD contained in the Stability Pool (as far as possible)
+    * and transfers the Trove's AE collateral from ActivePool to StabilityPool.
+    * Only called by liquidation functions in the TroveManager.
+    */
+    stateful entrypoint offset(debt_to_offset: int, coll_to_add: int) = with_addresses((addresses) =>
+        require_caller_is_trove_manager()
+        let total_aeusd = state.total_aeusd_deposits // cached to save an SLOAD
+        if (total_aeusd == 0 || debt_to_offset == 0) ()
+        else
+          trigger_lqty_issuance(addresses.community_issuance)
+
+          let (ae_gain_per_unit_staked,aeusd_loss_per_unit_staked) =
+            compute_rewards_per_unit_staked(coll_to_add, debt_to_offset, total_aeusd)
+
+          update_reward_sum_and_product(ae_gain_per_unit_staked, aeusd_loss_per_unit_staked)  // updates S and P
+
+          move_offset_coll_and_debt(coll_to_add, debt_to_offset)
+      )
+
+    //------------------------------------------------------------------------------
+    // OFFSET HELPER FUNCTIONS
+    //------------------------------------------------------------------------------
+    stateful function compute_rewards_per_unit_staked(
+        coll_to_add: int
+      , debt_to_offset: int
+      , total_aeusd_deposits: int
+      ): (int /*ae_gain_per_unit_staked*/ * int /*aeusd_loss_per_unit_staked*/) =
+        /*
+        * Compute the AEUSD and AE rewards. Uses a "feedback" error correction, to keep
+        * the cumulative error in the P and S state variables low:
+        *
+        * 1) Form numerators which compensate for the floor division errors that occurred the last time this
+        * function was called.
+        * 2) Calculate "per-unit-staked" ratios.
+        * 3) Multiply each ratio back by its denominator, to reveal the current floor division error.
+        * 4) Store these errors for use in the next correction when this function is called.
+        * 5) Note: static analysis tools complain about this "division before multiplication", however, it is intended.
+        */
+        let ae_numerator = SafeMath.add(coll_to_add * Utils.decimal_precision(),state.last_ae_error_offset)
+
+        require(debt_to_offset =< total_aeusd_deposits,"Stability: debt_to_offset is greater than total_aeusd_deposits")
+        let aeusd_loss_per_unit_staked  =
+          if (debt_to_offset == total_aeusd_deposits)
+            put(state{ last_aeusd_loss_error_offset = 0 })
+            Utils.decimal_precision()  // When the Pool depletes to 0, so does each deposit
+          else
+            let aeusd_loss_numerator = SafeMath.sub(
+                debt_to_offset * Utils.decimal_precision()
+              , state.last_aeusd_loss_error_offset)
+            /*
+            * Add 1 to make error in quotient positive. We want "slightly too much" AEUSD loss,
+            * which ensures the error in any given compoundedAEUSDDeposit favors the Stability Pool.
+            */
+            let aeusd_loss_per_unit_staked = SafeMath.add(SafeMath.div(aeusd_loss_numerator,total_aeusd_deposits),1)
+            put(state{ last_aeusd_loss_error_offset
+              = SafeMath.sub(aeusd_loss_per_unit_staked * total_aeusd_deposits,aeusd_loss_numerator) })
+            aeusd_loss_per_unit_staked
+
+        let ae_gain_per_unit_staked = SafeMath.div(ae_numerator,total_aeusd_deposits)
+        put(state{ last_ae_error_offset = SafeMath.sub(ae_numerator,ae_gain_per_unit_staked * total_aeusd_deposits) })
+
+        (ae_gain_per_unit_staked, aeusd_loss_per_unit_staked)
+
+    // Update the Stability Pool reward sum S and product P
+    stateful function update_reward_sum_and_product(ae_gain_per_unit_staked: int, aeusd_loss_per_unit_staked: int) =
+        let current_p = state.p
+
+        require(aeusd_loss_per_unit_staked =< Utils.decimal_precision(),
+          "StabilityPool: aeusd_loss_per_unit_staked is greater than decimal_precision ")
+
+        /*
+        * The newProductFactor is the factor by which to change all deposits, due to the depletion of Stability Pool AEUSD in the liquidation.
+        * We make the product factor 0 if there was a pool-emptying. Otherwise, it is (1 - AEUSDLossPerUnitStaked)
+        */
+        let new_product_factor = SafeMath.sub(Utils.decimal_precision(),aeusd_loss_per_unit_staked)
+
+        let current_scale = state.current_scale
+        let current_epoch = state.current_epoch
+        let current_s = Map.lookup_default((current_epoch,current_scale),state.epoch_to_scale_to_sum,0)
+
+        /*
+        * Calculate the new S first, before we update P.
+        * The AE gain for any given depositor from a liquidation depends on the value of their deposit
+        * (and the value of totalDeposits) prior to the Stability being depleted by the debt in the liquidation.
+        *
+        * Since S corresponds to AE gain, and P to deposit loss, we update S first.
+        */
+        let marginal_ae_gain = ae_gain_per_unit_staked * current_p
+        let new_s = SafeMath.add(current_s,marginal_ae_gain)
+        put(state{ epoch_to_scale_to_sum[(current_epoch,current_scale)] = new_s })
+        Chain.event(S_Updated(new_s, current_epoch, current_scale))
+
+        // If the Stability Pool was emptied, increment the epoch, and reset the scale and product P
+        let new_p =
+          if (new_product_factor == 0)
+            put( state {
+                current_epoch = SafeMath.add(current_epoch,1)
+              , current_scale = 0
+              } )
+            Chain.event(ScaleUpdated(state.current_scale))
+            Chain.event(EpochUpdated(state.current_epoch))
+            Utils.decimal_precision()
+          // If multiplying P by a non-zero product factor would reduce P below the scale boundary, increment the scale
+          else
+            if ( SafeMath.div(current_p * new_product_factor,Utils.decimal_precision()) < scale_factor() )
+              put(state{ current_scale = SafeMath.add(current_scale,1) })
+              Chain.event(ScaleUpdated(state.current_scale))
+              SafeMath.div(current_p * new_product_factor * scale_factor(),Utils.decimal_precision())
+            else
+              SafeMath.div(current_p * new_product_factor,Utils.decimal_precision())
+
+        require(new_p > 0,"Stability: new_p is not greater than 0")
+        put(state{ p = new_p })
+        Chain.event(P_Updated(new_p))
+
+    stateful function move_offset_coll_and_debt(coll_to_add: int, debt_to_offset: int) = with_addresses((addresses) =>
+        // Cancel the liquidated AEUSD debt with the AEUSD in the stability pool
+        addresses.active_pool.decrease_aeusd_debt(debt_to_offset)
+        decrease_aeusd(debt_to_offset)
+
+        // Burn the debt that was successfully offset
+        addresses.aeusd_token.burn(Contract.address, debt_to_offset)
+
+        addresses.active_pool.send_ae(Contract.address, coll_to_add)
+      )
+
+    stateful function decrease_aeusd(amount: int) =
+        let new_total_aeusd_deposits = SafeMath.sub(state.total_aeusd_deposits,amount)
+        put(state{ total_aeusd_deposits = new_total_aeusd_deposits })
+        Chain.event(StabilityPoolAEUSDBalanceUpdated(new_total_aeusd_deposits))
+    //------------------------------------------------------------------------------
     // SENDER FUNCTIONS FOR AEUSD DEPOSIT, AE GAINS AND LQTY GAINS
     //------------------------------------------------------------------------------
 
@@ -629,14 +764,6 @@ contract StabilityPool =
 
           Chain.event(FrontEndSnapshotUpdated(front_end, current_p, current_g))
 
-    //------------------------------------------------------------------------------
-    // liquidation functions
-    //------------------------------------------------------------------------------
-
-    stateful function decrease_aeusd(amount: int) =
-        let new_total_aeusd_deposits = SafeMath.sub(state.total_aeusd_deposits,amount)
-        put(state{ total_aeusd_deposits = new_total_aeusd_deposits })
-        Chain.event(StabilityPoolAEUSDBalanceUpdated(new_total_aeusd_deposits))
 
     //------------------------------------------------------------------------------
     // LQTY ISSUANCE FUNCTIONS
