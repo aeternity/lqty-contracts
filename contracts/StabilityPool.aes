@@ -519,6 +519,57 @@ contract StabilityPool =
         send_ae_gain_to_depositor(depositor_ae_gain)
       )
 
+    /* withdrawAEGainToTrove:
+    * - Triggers a LQTY issuance, based on time passed since the last issuance. The LQTY issuance is shared between *all* depositors and front ends
+    * - Sends all depositor's LQTY gain to  depositor
+    * - Sends all tagged front end's LQTY gain to the tagged front end
+    * - Transfers the depositor's entire AE gain from the Stability Pool to the caller's trove
+    * - Leaves their compounded deposit in the Stability Pool
+    * - Updates snapshots for deposit and tagged front end stake */
+    stateful entrypoint withdraw_ae_gain_to_trove(upper_hint: address, lower_hint: address) = with_addresses((addresses) =>
+        let initial_deposit = Map.lookup_default(Call.caller,state.deposits,no_deposit()).initial_value
+        require_user_has_deposit(initial_deposit)
+        require_user_has_trove(Call.caller)
+        require_user_has_ae_gain(Call.caller)
+
+        trigger_lqty_issuance(addresses.community_issuance)
+
+        let depositor_ae_gain = get_depositor_ae_gain(Call.caller)
+
+        let compounded_aeusd_deposit = get_compounded_aeusd_deposit(Call.caller)
+        let aeusd_loss = SafeMath.sub(initial_deposit,compounded_aeusd_deposit) // Needed only for event log
+
+        // First pay out any LQTY gains
+        let front_end_opt = state.deposits[Call.caller].front_end_tag
+        pay_out_lqty_gains(addresses.community_issuance, Call.caller, front_end_opt)
+
+        // Update front end stake
+        switch(front_end_opt)
+          None => ()
+          Some(front_end) =>
+            let new_front_end_stake = get_compounded_front_end_stake(front_end)
+            update_front_end_stake_and_snapshots(front_end, new_front_end_stake)
+            Chain.event(FrontEndStakeChanged(front_end, new_front_end_stake, Call.caller))
+
+        update_deposit_and_snapshots(Call.caller, compounded_aeusd_deposit)
+
+        /* Emit events before transferring AE gain to Trove.
+         This lets the event log make more sense (i.e. so it appears that first the AE gain is withdrawn
+        and then it is deposited into the Trove, not the other way around). */
+        Chain.event(AEGainWithdrawn(Call.caller, depositor_ae_gain, aeusd_loss))
+        Chain.event(UserDepositChanged(Call.caller, compounded_aeusd_deposit))
+
+        put(state{ ae @ ae = SafeMath.sub(ae,depositor_ae_gain) })
+        Chain.event(StabilityPoolAEBalanceUpdated(state.ae))
+        Chain.event(AESent(Call.caller, depositor_ae_gain))
+
+        addresses.borrower_operations.move_ae_gain_to_trove(
+            Call.caller
+          , upper_hint
+          , lower_hint
+          , value = depositor_ae_gain)
+      )
+
     //------------------------------------------------------------------------------
     // SENDER FUNCTIONS FOR AEUSD DEPOSIT, AE GAINS AND LQTY GAINS
     //------------------------------------------------------------------------------
