@@ -750,6 +750,15 @@ contract StabilityPool =
 
         Chain.event(FrontEndRegistered(Call.caller, kickback_rate))
 
+
+    //------------------------------------------------------------------------------
+    // FALLBACK FUNCTION
+    //------------------------------------------------------------------------------
+    payable stateful entrypoint receive() =
+        require_caller_is_active_pool()
+        put(state{ ae @ ae = SafeMath.add(ae,Call.value) })
+        Chain.event(StabilityPoolAEBalanceUpdated(state.ae))
+
     //------------------------------------------------------------------------------
     // LQTY ISSUANCE FUNCTIONS
     //------------------------------------------------------------------------------
