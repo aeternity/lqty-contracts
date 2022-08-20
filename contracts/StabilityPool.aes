@@ -293,9 +293,9 @@ contract StabilityPool =
     // DATA GETTERS
     //------------------------------------------------------------------------------
 
-    function get_ae() = state.ae
+    entrypoint get_ae() = state.ae
 
-    function get_total_aeusd_deposits() = state.total_aeusd_deposits
+    entrypoint get_total_aeusd_deposits() = state.total_aeusd_deposits
 
     //------------------------------------------------------------------------------
     // REWARD CALCULATOR FUNCTIONS FOR DEPOSITOR AND FRONT END
@@ -828,11 +828,11 @@ contract StabilityPool =
         Chain.event(LQTYPaidToDepositor(depositor, depositor_lqty_gain))
 
     stateful function update_deposit_and_snapshots(depositor: address, new_value: int) =
-        put(state{ deposits[depositor = no_deposit()] @ d = d { initial_value = new_value}})
-
         if (new_value == 0)
-          put(state{ deposits[depositor ] @ d = d { front_end_tag = None }})
-          put(state{ deposit_snapshots @ d = Map.delete(depositor,d) })
+          put(state{
+              deposits @ d = Map.delete(depositor,d)
+            , deposit_snapshots @ d = Map.delete(depositor,d) })
+
           Chain.event(DepositSnapshotUpdated(depositor, Utils.xsToPayload([0, 0, 0])))
         else
           let current_scale = state.current_scale
@@ -844,12 +844,14 @@ contract StabilityPool =
           let current_g = Map.lookup_default((current_epoch,current_scale),state.epoch_to_scale_to_g,0)
 
           // Record new snapshots of the latest running product P, sum S, and sum G, for the depositor
-          put(state{ deposit_snapshots[depositor] = {
-              p = current_p
-            , s = current_s
-            , g = current_g
-            , scale = current_scale
-            , epoch = current_epoch
+          put(state{
+              deposits[depositor = no_deposit()] @ d = d { initial_value = new_value}
+            , deposit_snapshots[depositor] = {
+                p = current_p
+              , s = current_s
+              , g = current_g
+              , scale = current_scale
+              , epoch = current_epoch
             }})
 
           Chain.event(DepositSnapshotUpdated(depositor, Utils.xsToPayload([current_p, current_s, current_g])))
@@ -890,7 +892,7 @@ contract StabilityPool =
         let initial_deposit = Map.lookup_default(depositor,state.deposits,no_deposit()).initial_value
         if(initial_deposit == 0) 0
         else
-          let snapshots = state.deposit_snapshots[depositor]
+          let snapshots = Map.lookup_default(depositor, state.deposit_snapshots, no_snapshots())
           get_compounded_stake_from_snapshots(initial_deposit, snapshots)
 
     /*
@@ -904,7 +906,7 @@ contract StabilityPool =
         let front_end_stake = Map.lookup_default(front_end,state.front_end_stakes,0)
         if(front_end_stake == 0) 0
         else
-          let snapshots = state.front_end_snapshots[front_end]
+          let snapshots = Map.lookup_default(front_end, state.front_end_snapshots, no_snapshots())
           get_compounded_stake_from_snapshots(front_end_stake, snapshots)
 
     // Internal function, used to calculcate compounded deposits and compounded front end stakes.
