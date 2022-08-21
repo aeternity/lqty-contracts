@@ -133,7 +133,6 @@ contract SortedTroves =
                                         , [prev_id] @ b = b { next_id = Some(id)}
                                         , [next_id] @ b = b { prev_id = Some(id)}
                                         }
-                        , tail = Some(id)
                      }})
         //increase size
         put(state{ data @ d = d { size @ s = s + 1 }})
@@ -165,7 +164,7 @@ contract SortedTroves =
         else
           if(Some(id) == state.data.tail)
            // The removed node is the tail
-           let new_tail_id: address = Option.force(Option.force(Map.lookup(id,state.data.nodes)).prev_id)
+           let new_tail_id: address = Option.force(state.data.nodes[id].prev_id)
            put(state{ data @ d = d {
                  // Set tail to previous node
                  tail = Some(new_tail_id)
@@ -174,7 +173,7 @@ contract SortedTroves =
              }})
           else
             // The removed node is neither the head nor the tail
-            let node = Option.force(Map.lookup(id,state.data.nodes))
+            let node = state.data.nodes[id]
             let prev_id: address = Option.force(node.prev_id)
             let next_id: address = Option.force(node.next_id)
             put(state{ data @ d = d {
@@ -325,15 +324,17 @@ contract SortedTroves =
      )
 
     function
-      /*// Descend the list until we reach the end or until we find a valid insert position*/
+      // Ascend the list until we reach the end or until we find a valid insertion point
       loop_for_ascend: (int,option(address),option(address)) => (option(address)*option(address))
       loop_for_ascend(_,prev_id,None) = (prev_id,None)
       loop_for_ascend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
       loop_for_ascend(nicr,prev_id,Some(next_id)) =
-          //get the next_id node's prev_id
-          let prev_id = Map.lookup_default(next_id,state.data.nodes,null_node()).prev_id
-          //and loop again
-          loop_for_descend(nicr,prev_id,prev_id)
+          let next_id_opt = Map.lookup_default(next_id, state.data.nodes, null_node()).prev_id
+          let prev_id_opt = Option.flat_map(
+              (next_id) => Map.lookup_default(next_id, state.data.nodes, null_node()).prev_id
+            , next_id_opt)
+          loop_for_ascend(nicr,prev_id_opt,next_id_opt)
+
     /*
      * @dev Descend the list (larger NICRs to smaller NICRs) to find a valid insert position
      * @param _troveManager TroveManager contract, passed in as param to save SLOAD’s
@@ -356,15 +357,16 @@ contract SortedTroves =
       )
 
     function
-      /*// Descend the list until we reach the end or until we find a valid insert position*/
+      // Descend the list until we reach the end or until we find a valid insert position
       loop_for_descend: (int,option(address),option(address)) => (option(address)*option(address))
       loop_for_descend(_,None,next_id) = (None,next_id)
       loop_for_descend(nicr,prev_id,next_id) | valid_insert_position(nicr,prev_id,next_id) = (prev_id,next_id)
       loop_for_descend(nicr,Some(prev_id),next_id) =
-          //get the prev_id node's next_id
-          let next_id = Map.lookup_default(prev_id,state.data.nodes,null_node()).next_id
-          //and loop again
-          loop_for_descend(nicr,next_id,next_id)
+          let prev_id_opt = Map.lookup_default(prev_id, state.data.nodes, null_node()).next_id
+          let next_id_opt = Option.flat_map(
+              (prev_id) => Map.lookup_default(prev_id, state.data.nodes, null_node()).next_id
+            , prev_id_opt )
+          loop_for_descend(nicr,prev_id_opt,next_id_opt)
 
     function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
         None => abort("no addresses")
