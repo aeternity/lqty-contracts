@@ -106,7 +106,7 @@ const deploy = async ( secretKey, network, compiler ) => {
         ]
     try {
         //for ( const dep of deployments ) { await dep() }
-        await deployments[4]()
+        await deployments[3]()
     } catch ( ex ) {
         //empty
     }
