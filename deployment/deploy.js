@@ -51,6 +51,21 @@ const deploy = async ( secretKey, network, compiler ) => {
             ),
             /* 04 */ () => deployContract( './contracts/TroveManager.aes',
                 [],
+	    ),
+            /* 05 */ () => deployContract( './contracts/lqty/CommunityIssuance.aes',
+                [],
+					 ),
+            /* 06 */ () => deployContract( './contracts/lqty/LQTYToken.aes',
+                [],
+	    ),
+            /* 07 */ () => deployContract( './contracts/lqty/LQTYStaking.aes',
+                [],
+            ),
+            /* 08 */ () => deployContract( './contracts/lqty/LockupContractFactory.aes',
+                [],
+					 ),
+            /* 09 */ () => deployContract( './contracts/lqty/LockupContract.aes',
+                [10],
             ),
             /* 05 */ () => deployContract( './test/contracts/PriceFeedTestnet.aes',
                 [],
@@ -71,6 +86,7 @@ const deploy = async ( secretKey, network, compiler ) => {
                 [],
             ),
         ]
+
     //for ( const dep of deployments ) { await dep() }
     await deployments[8]()
 }

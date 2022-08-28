@@ -1,0 +1,280 @@
+@compiler >= 6
+
+include "Option.aes"
+include "String.aes"
+include "../interfaces/ILQTYToken.aes"
+include "../interfaces/ICommunityIssuance.aes"
+include "../interfaces/IStabilityPool.aes"
+include "../interfaces/ILQTYStaking.aes"
+include "../interfaces/ILockupContractFactory.aes"	
+include "../dependencies/LiquityMath.aes"
+include "../dependencies/SafeMath.aes"
+include "../dependencies/Utils.aes"
+
+/*
+* Based upon AEX9 https://github.com/aeternity/AEXs/blob/master/AEXS/aex-9.md https://github.com/mradkov/aeternity-fungible-token/blob/master/contracts/fungible-token.aes
+* and not ERC20 https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC20/ERC20.sol
+*  
+* and their EIP2612 (ERC20Permit / ERC712) functionality:
+* https://github.com/OpenZeppelin/openzeppelin-contracts/blob/53516bc555a454862470e7860a9b5254db4d00f5/contracts/token/ERC20/ERC20Permit.sol
+p* TODO: check if above functionality is important
+* This ERC extends the ERC-20 standard with a new function permit, which allows users to modify the allowance mapping using a signed message, instead of through msg.sender.
+*
+*  --- Functionality added specific to the LQTYToken ---
+* 
+* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Liquity contracts) in external 
+* transfer() and transferFrom() calls. The purpose is to protect users from losing tokens by mistakenly sending LQTY directly to a Liquity
+* core contract, when they should rather call the right function.
+*
+* 2) sendToLQTYStaking(): callable only by Liquity core contracts, which move LQTY tokens from user -> LQTYStaking contract.
+*
+* 3) Supply hard-capped at 100 million
+*
+* 4) CommunityIssuance and LockupContractFactory addresses are set at deployment
+*
+* 5) The bug bounties / hackathons allocation of 2 million tokens is minted at deployment to an EOA
+
+* 6) 32 million tokens are minted at deployment to the CommunityIssuance contract
+*
+* 7) The LP rewards allocation of (1 + 1/3) million tokens is minted at deployent to a Staking contract
+*
+* 8) (64 + 2/3) million tokens are minted at deployment to the Liquity multisig
+*
+* 9) Until one year from deployment:
+* -Liquity multisig may only transfer() tokens to LockupContracts that have been deployed via & registered in the 
+*  LockupContractFactory 
+* -approve(), increaseAllowance(), decreaseAllowance() revert when called by the multisig
+* -transferFrom() reverts when the multisig is the sender
+* -sendToLQTYStaking() reverts when the multisig is the sender, blocking the multisig from staking its LQTY.
+* 
+* After one year has passed since deployment of the LQTYToken, the restrictions on multisig operations are lifted
+* and the multisig has the same rights as any other address.
+*/
+
+contract LQTYToken =
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record addresses = {
+    	  community_issuance: ICommunityIssuance
+	, lqty_staking: ILQTYStaking
+	, lockup_contract_factory: ILockupContractFactory
+	, bounty: address
+	, mutlisig: address	
+        }
+	
+    record meta_info = {
+          name : string
+	, symbol : string
+	, decimals : int
+	}
+
+    record state = {
+          owner: address
+        , addresses: option(addresses)
+	// AX9 token data
+	, balances: map(address, int) 
+	, total_supply: int
+	// Extension Allowance                                                                                                                                                                                                                              
+	, allowances: map(address, map(address, int))	
+	, deployment_start_time: int
+	, lp_rewards_entitlement: int
+        }
+
+    //------------------------------------------------------------------------------
+    // CONSTANTS
+    //------------------------------------------------------------------------------
+
+    // --- AX9 meta information --
+    function name() : string = "LQTY"
+    function symbol() : string = "LQTY"
+    function decimals() : int = 18
+
+    // --- not part of AX9 meta information
+    function version() : string = "1"    
+    function one_million() : int = 1000000000000000000000000 // 1e24
+    function one_year_in_seconds() : int = 31536000  // 60 * 60 * 24 * 365
+
+    entrypoint init() =
+        {  owner = Call.caller
+	 , addresses = None
+	 , balances = {}
+	 , allowances = {}
+	 , total_supply = 0
+	 , deployment_start_time = Chain.timestamp
+	 , lp_rewards_entitlement = one_million() * 4 / 3
+         }
+
+    stateful entrypoint set_addresses(addresses: addresses, lp_reward: address) =
+      put(state{addresses = Some(addresses)})
+
+      // --- Initial LQTY allocations ---
+      let bounty_entitlement = one_million() * 2 // Allocate 2 million for bounties/hackathons
+      mint(addresses.bounty, bounty_entitlement) 
+
+      let depositors_and_frontends_entitlement = one_million() * 32 // Allocate 32 million to the algorithmic issuance schedule
+      mint(addresses.community_issuance.address, depositors_and_frontends_entitlement)
+
+      mint(lp_reward, state.lp_rewards_entitlement)
+
+      let multisig_entitlement = one_million() * 100 - bounty_entitlement - depositors_and_frontends_entitlement - state.lp_rewards_entitlement
+      mint(addresses.mutlisig, multisig_entitlement) 
+
+    // --- External functions ---
+    // AEX9 interface
+    entrypoint aex9_extensions(): list(string) = ["mintable", "allowances"]
+
+    entrypoint meta_info(): meta_info = {name = name(), symbol = symbol(), decimals = decimals()}
+    
+    entrypoint total_supply(): int = state.total_supply
+
+    entrypoint owner(): address = state.owner
+
+    entrypoint balance(account: address): option(int) = Map.lookup(account, state.balances)
+
+    entrypoint balances(): map(address, int) = state.balances
+
+    // ILQTYToken interface
+    entrypoint balance_of(account: address): int = Map.lookup_default(account, state.balances, 0)
+
+    entrypoint get_deployment_start_time(): int = state.deployment_start_time
+
+    entrypoint get_lp_rewards_entitlement(): int = state.lp_rewards_entitlement
+
+    stateful entrypoint transfer(recipient: address, amount: int) : unit =
+      // Restrict the multisig's transfers in first year
+      if (caller_is_multisig()  && is_first_year())
+      	 require_recipient_is_registered_lc(recipient)
+
+      require_valid_recipient(recipient)
+
+      // Otherwise, standard transfer functionality
+      transfer_from(Call.caller, recipient, amount)
+
+    // TODO: is this part of AEX9 Allowance extension 
+    entrypoint allowance(owner: address, spender: address) : int = state.allowances[owner][spender]
+
+    stateful entrypoint approve(spender: address, amount: int) : unit =
+      if (is_first_year())
+      	 require_caller_is_not_multisig()
+
+      approve_internal(Call.caller, spender, amount)
+
+    stateful entrypoint transfer_from(sender: address,  recipient: address, amount: int) : unit =
+      if (is_first_year())
+      	 require_caller_is_not_multisig()
+
+      require_valid_recipient(recipient)
+
+      transfer_internal(sender, recipient, amount)
+      approve_internal(sender, Call.caller, SafeMath.subWithMsg(state.allowances[sender][Call.caller], amount, "ERC20: transfer amount exceeds allowance"))
+
+    stateful entrypoint increase_allowance(spender: address, added_value: int) : unit =
+      if (is_first_year())
+      	 require_caller_is_not_multisig()
+	 
+      approve_internal(Call.caller, spender, SafeMath.add(state.allowances[Call.caller][spender], added_value))
+
+    stateful entrypoint decrease_allowance(spender: address, substracted_value: int) : unit =
+      if (is_first_year())
+      	 require_caller_is_not_multisig()
+	 
+      approve_internal(Call.caller, spender, SafeMath.sub(state.allowances[Call.caller][spender], substracted_value))
+
+    stateful entrypoint send_to_lqty_staking(sender: address, amount: int) : unit = with_addresses((addresses) =>
+        require_caller_is_lqty_staking()
+      
+        if (is_first_year())
+      	  require_sender_is_not_multisig(sender)
+	 
+        transfer_internal(sender, addresses.lqty_staking.address, amount)
+      )
+
+    // --- Internal operations ---
+
+    stateful function transfer_internal(sender: address, recipient: address, amount: int) : unit =
+      require_non_negative_value(amount)
+      require_balance(sender, amount)
+
+      put( state { balances @ b = b { [sender] @ s = s - amount
+                                    , [recipient] @ r = r + amount
+				    }
+                 }
+	)
+      //Chain.event(Transfer(Some(sender), recipient, amount))
+
+    // non public, only called from init() then owner check is not required ?
+    stateful function mint(account: address, amount: int) =
+      require_non_negative_value(amount)
+      
+      put( state { total_supply @ t = t + amount
+                 , balances[account] @ b = SafeMath.add(b, amount)
+                 }
+	)
+
+      //Chain.event(Transfer(None, account, amount))
+      // TODO: check if we follow mint AEX9 extenesion      
+      Chain.event(Mint(account, amount))      
+
+    stateful function approve_internal(owner: address,spender: address, amount: int) =
+      require_non_negative_value(amount)    
+      put( state { allowances[owner][spender] = amount })
+      Chain.event(Approveal(owner, spender, amount))
+
+    // helper functions
+
+    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+      None => abort("LQTYToken: no addresses")
+      Some(addresses) => f(addresses)
+
+    function caller_is_multisig() : bool = with_addresses((addresses) =>
+        Call.caller == addresses.mutlisig
+      )
+
+    function is_first_year() : bool =
+      Chain.timestamp - state.deployment_start_time < one_year_in_seconds() 
+
+    // --- Requirements
+    
+    function require_non_negative_value(value : int) : unit  =
+      require(value >= 0, "NON_NEGATIVE_VALUE_REQUIRED")
+
+    function require_balance(account : address, value : int) : unit =
+      switch(balance(account))
+        Some(balance) =>
+      	  require(balance >= value, "ACCOUNT_INSUFFICIENT_BALANCE")
+	None => abort("BALANCE_ACCOUNT_NOT_EXISTENT")
+
+    function require_valid_recipient(recipient: address) : unit = with_addresses((addresses) =>
+        require(recipient != Contract.address, "LQTY: Cannot transfer tokens directly to the LQTY token contract or the zero address")
+
+        require(recipient != addresses.community_issuance.address && recipient != addresses.lqty_staking.address, "LQTY: Cannot transfer tokens directly to the community issuance or staking contract")
+      )
+
+    function require_recipient_is_registered_lc(recipient: address) : unit = with_addresses((addresses) =>
+    	require(addresses.lockup_contract_factory.is_registered_lockup(recipient), "LQTYToken: recipient must be a LockupContract registered in the Factory")
+      )
+      
+    function require_sender_is_not_multisig(sender: address) : unit = with_addresses((addresses) =>
+        require(sender != addresses.mutlisig, "LQTYToken: sender must not be the multisig")
+      )
+
+    function require_caller_is_not_multisig() : unit = 
+      require(! caller_is_multisig() , "LQTYToken: caller must not be the multisig")
+
+
+    function require_caller_is_lqty_staking() : unit = with_addresses((addresses) =>
+        require(Call.caller == addresses.lqty_staking.address, "LQTYToken: caller must be the LQTYStaking contract")
+      )
+
+    // --- Events ---
+    datatype event
+      = CommunityIssuanceAddressSet(ICommunityIssuance /*communityIssuanceAddress*/)
+      | LQTYStakingAddressSet(ILQTYStaking /*lqtyStaking*/)
+      | LockupContractFactoryAddressSet(ILockupContractFactory /*lockupContractFactory*/)
+      | Approveal(address /*owner*/, address /*spender*/, int /*amount*/)
+      | Mint(address /*account*/, int /*amount*/)             
+      // | Transfer(option(address) /*sender*/, address /*receiver*/, int /*amount*/)       
+      // TODO: Specification says sender is just an address not an option, option is only used when minting
+
