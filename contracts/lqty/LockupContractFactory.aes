@@ -1,0 +1,72 @@
+@compiler >= 6
+
+include "Option.aes"
+include "String.aes"
+include "LockupContract.aes"
+include "../interfaces/ILQTYToken.aes"
+include "../interfaces/ILockupContractFactory.aes"
+include "../dependencies/SafeMath.aes"
+include "../dependencies/Utils.aes"
+
+/*
+* The LockupContractFactory deploys LockupContracts - its main purpose is to keep a registry of valid deployed 
+* LockupContracts. 
+* 
+* This registry is checked by LQTYToken when the Liquity deployer attempts to transfer LQTY tokens. During the first year 
+* since system deployment, the Liquity deployer is only allowed to transfer LQTY to valid LockupContracts that have been 
+* deployed by and recorded in the LockupContractFactory. This ensures the deployer's LQTY can't be traded or staked in the
+* first year, and can only be sent to a verified LockupContract which unlocks at least one year after system deployment.
+*
+* LockupContracts can of course be deployed directly, but only those deployed through and recorded in the LockupContractFactory 
+* will be considered "valid" by LQTYToken. This is a convenient way to verify that the target address is a genuine 
+* LockupContract.
+*/
+
+contract LockupContractFactory =
+
+    record state = {
+          owner: option(address)    
+        , lqty_token: option(ILQTYToken)
+	, lockup_contract_to_deployer: map(address, address)
+        }
+
+    entrypoint init() =
+        {  owner = Some(Call.caller)
+	 , lqty_token = None
+	 , lockup_contract_to_deployer = {}
+         }
+
+    stateful entrypoint set_lqty_token(lqty_token: ILQTYToken) =
+      //requirement
+      only_owner()
+    
+      put(state{lqty_token = Some(lqty_token)})
+
+      Chain.event(LQTYTokenAddressSet(lqty_token))
+
+      renounce_ownership()
+
+    stateful entrypoint deploy_lockup_contract(beneficiary: address, unlock_time: int) : unit = with_lqty_token((lqty_token) =>
+        let lockup_contract = Chain.create(lqty_token, beneficiary, unlock_time) : LockupContract
+
+	put(state{lockup_contract_to_deployer[lockup_contract.address] = Call.caller})
+
+	Chain.event(LockupContractDeployedThroughFactory(lockup_contract.address, beneficiary, Call.caller, payload = Utils.xsToPayload([unlock_time])))
+      )
+
+    entrypoint is_registered_lockup(contract': address) : bool =
+      Option.is_some(Map.lookup(contract', state.lockup_contract_to_deployer))
+
+    // helper functions
+
+    function with_lqty_token(f: (addresses) => 'a ): 'a = switch(state.lqty_token)
+      None => abort("LockupContractFactory: LQTYToken no addresses")
+      Some(addresses) => f(addresses)
+
+    // --- Events ---
+    datatype event
+      = LQTYTokenAddressSet(ILQTYToken /*lqtyToken*/)
+      | LockupContractDeployedThroughFactory(LockupContract /*locupContract*/, address /*beneficiary*/, address /*deployer*/)
+//#inject "../dependencies/Ownable.events.aes"
+
+//#inject "../dependencies/Ownable.functions.aes"

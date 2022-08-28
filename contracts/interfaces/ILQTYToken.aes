@@ -11,6 +11,10 @@ contract interface ILQTYToken =
 
     stateful entrypoint send_to_lqty_staking: (address /*sender*/, int /*uint256 _amount*/) => unit
 
+    entrypoint balance_of: (address /*account*/) => int
+
     entrypoint get_deployment_start_time: () => int
 
     entrypoint get_lp_rewards_entitlement: () => int
+
+//#inject "./IAEX9.functions.aes"
