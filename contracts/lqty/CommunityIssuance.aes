@@ -1,0 +1,123 @@
+@compiler >= 6
+
+include "Option.aes"
+include "../interfaces/ILQTYToken.aes"
+include "../interfaces/ICommunityIssuance.aes"
+include "../interfaces/IStabilityPool.aes"
+include "../dependencies/LiquityMath.aes"
+include "../dependencies/SafeMath.aes"
+include "../dependencies/Utils.aes"
+
+contract CommunityIssuance =
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record addresses = {
+          lqty_token: ILQTYToken
+        , stability_pool: IStabilityPool	  
+        }
+
+    record state = {
+          owner: option(address)
+        , addresses: option(addresses)
+	, total_lqty_issued: int
+	, deployed_time: int // TODO: INMUTABLE
+        }
+
+    //------------------------------------------------------------------------------
+    // CONSTANTS
+    //------------------------------------------------------------------------------
+
+    function seconds_in_one_minute() = 60
+
+    function issuance_factor() = 999998681227695000
+
+    function lqty_supply_cap() = 32 * 10 ^ 24  // TODO: is not 32 millons as documented in Solidity code ?
+
+    entrypoint init() =
+        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        {  owner = Some(Call.caller)
+         , addresses = None
+	 , total_lqty_issued = 0
+	 , deployed_time = Chain.timestamp
+         }
+
+    stateful entrypoint set_addresses(addresses: addresses) =
+      //requirement
+      only_owner()
+
+      put(state{addresses = Some(addresses)})
+
+      require_lqty_balance_ge_lqty_supply_cap()
+
+      Chain.event(LQTYTokenAddressSet(addresses.lqty_token))
+      Chain.event(StabilityPoolAddressChanged(addresses.stability_pool))
+
+      renounce_ownership()
+
+    stateful entrypoint issue_lqty() : int =
+      require_caller_is_stability_pool()
+
+      let latest_total_lqty_issued = SafeMath.div(lqty_supply_cap() * get_cumulative_issuance_fraction(), Utils.decimal_precision())
+      let issuance = SafeMath.sub(latest_total_lqty_issued, state.total_lqty_issued)
+
+      put(state { total_lqty_issued = latest_total_lqty_issued })
+      Chain.event(TotalLQTYIssuedUpdated(latest_total_lqty_issued))
+
+      issuance
+
+    /* Gets 1-f^t    where: f < 1
+
+    f: issuance factor that determines the shape of the curve
+    t:  time passed since last LQTY issuance event  */
+    function get_cumulative_issuance_fraction(): int =
+      // Get the time passed since deployment	
+      let time_passed_in_minutes = SafeMath.div(SafeMath.sub(Chain.timestamp, state.deployed_time), seconds_in_one_minute())
+
+      // f^t			 
+      let power = LiquityMath.dec_pow(issuance_factor(), time_passed_in_minutes)
+
+      //  (1 - f^t)
+      let cumulative_issuance_fraction = SafeMath.sub(Utils.decimal_precision(), power)
+      require(cumulative_issuance_fraction =< Utils.decimal_precision(), "CommunityIssuacne: cumulative_issuance_fraction must be in range [0,1]")
+
+      cumulative_issuance_fraction
+
+    entrypoint send_lqty(account: address, lqty_amount: int) = with_addresses((addresses) =>
+        require_caller_is_stability_pool()
+
+        addresses.lqty_token.transfer(account, lqty_amount)
+      )
+      
+    //------------------------------------------------------------------------------
+    // CONSTRAINTS
+    //------------------------------------------------------------------------------
+
+    function require_lqty_balance_ge_lqty_supply_cap() = with_addresses((addresses) =>
+        require(
+            addresses.lqty_token.balance_of(Call.caller) >= lqty_supply_cap()
+          , "When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
+	  )
+      )
+
+    function require_caller_is_stability_pool() = with_addresses( (addresses) =>
+        require(Call.caller == addresses.stability_pool.address, "BorrowerOps: Caller is not Stability Pool")
+      )
+
+    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
+      None => abort("CommunityIssuance: no addresses")
+      Some(addresses) => f(addresses)
+
+    datatype event
+      = LQTYTokenAddressSet(ILQTYToken /*lqtyTokenAddress*/)
+      | StabilityPoolAddressChanged(IStabilityPool /*stabilityPoolAddress*/)
+      | TotalLQTYIssuedUpdated(int /*totalLQTYIssued*/)
+//#inject "../dependencies/Ownable.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+
+//#inject "../dependencies/Ownable.functions.aes"
+
