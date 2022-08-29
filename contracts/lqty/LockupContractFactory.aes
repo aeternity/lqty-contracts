@@ -22,7 +22,7 @@ include "../dependencies/Utils.aes"
 * LockupContract.
 */
 
-contract LockupContractFactory =
+main contract LockupContractFactory =
 
     record state = {
           owner: option(address)    
@@ -47,11 +47,12 @@ contract LockupContractFactory =
       renounce_ownership()
 
     stateful entrypoint deploy_lockup_contract(beneficiary: address, unlock_time: int) : unit = with_lqty_token((lqty_token) =>
-        let lockup_contract = Chain.create(lqty_token, beneficiary, unlock_time) : LockupContract
+        let lockup_contract = Chain.create() : LockupContract
+	lockup_contract.set_addresses({lqty_token = lqty_token, beneficiary = beneficiary}, unlock_time)
 
 	put(state{lockup_contract_to_deployer[lockup_contract.address] = Call.caller})
 
-	Chain.event(LockupContractDeployedThroughFactory(lockup_contract.address, beneficiary, Call.caller, payload = Utils.xsToPayload([unlock_time])))
+	Chain.event(LockupContractDeployedThroughFactory(lockup_contract.address, beneficiary, Utils.addIntToPayload(Address.to_str(Call.caller),unlock_time))) // 
       )
 
     entrypoint is_registered_lockup(contract': address) : bool =
@@ -59,14 +60,14 @@ contract LockupContractFactory =
 
     // helper functions
 
-    function with_lqty_token(f: (addresses) => 'a ): 'a = switch(state.lqty_token)
+    function with_lqty_token(f: (ILQTYToken) => 'a ): 'a = switch(state.lqty_token)
       None => abort("LockupContractFactory: LQTYToken no addresses")
       Some(addresses) => f(addresses)
 
     // --- Events ---
     datatype event
       = LQTYTokenAddressSet(ILQTYToken /*lqtyToken*/)
-      | LockupContractDeployedThroughFactory(LockupContract /*locupContract*/, address /*beneficiary*/, address /*deployer*/)
+      | LockupContractDeployedThroughFactory(address /*locupContract*/, address /*beneficiary*/, string  /*deployer: address, unlock_time: unlock_time*/)
 //#inject "../dependencies/Ownable.events.aes"
 
 //#inject "../dependencies/Ownable.functions.aes"
