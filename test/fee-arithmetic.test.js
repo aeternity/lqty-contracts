@@ -3,6 +3,8 @@ const { expect } = require( 'chai' )
 import utils from '../utils/contract-utils'
 import { wrapContractInstance } from '../utils/wrapper'
 import { setupDeployment, connectCoreContracts  } from './shared/deploymentHelper'
+import { testHelper } from './shared/testHelper'
+const { dec } = testHelper
 
 import wallets from '../config/wallets.json'
 const accounts = wallets.defaultWallets.map( x => x.publicKey )
@@ -12,6 +14,9 @@ describe( 'Fee arithmetic tests', () => {
     let mathTester
     let contracts
     let LQTYContracts
+    let timeOffsetForDebugger
+    const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time( seconds * 1000n )
+
     utils.beforeEachWithSnapshot( 'deploy contract', async () => {
         const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
         contracts = await deployLiquityCore()
@@ -22,6 +27,12 @@ describe( 'Fee arithmetic tests', () => {
         mathTester = wrapContractInstance(
             await deployContract( './test/contracts/LiquityMathTester.aes', )
         )
+
+        timeOffsetForDebugger = wrapContractInstance(
+            await deployContract( './test/contracts/TimeOffsetForDebug.aes', )
+        )
+
+        await troveManagerTester.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )
 
         //connect contracts
         console.log( "connecting contracts" )
@@ -39,7 +50,7 @@ describe( 'Fee arithmetic tests', () => {
         [ 432, 7 ],
         [ 1179, 19 ],
         [ 2343, 39 ],
-        [ 3599, 59 ],
+        [ 3598, 59 ],
         [ 3600, 60 ],
         [ 10000, 166 ],
         [ 15000, 250 ],
@@ -344,25 +355,33 @@ describe( 'Fee arithmetic tests', () => {
 
         expect( minutesPassed ).to.eq( 0n )
     } )
-    it( "asa minutesPassedSinceLastFeeOp(): returns minutes passed for no time increase", async () => {
-        await troveManagerTester.set_last_fee_op_time_to_now()
-        const minutesPassed = await troveManagerTester.minutes_passed_since_last_fee_op()
+    it( "minutesPassedSinceLastFeeOp(): returns minutes passed between time of last fee operation and current block.timestamp, rounded down to nearest minutes", async () => {
+        const xs = secondsToMinutesRoundedDown // .slice( 0, 10 )
+        for ( const testPair of xs ) {
+            await troveManagerTester.set_last_fee_op_time_to_now()
 
-        expect( minutesPassed ).to.eq( 0n )
+            const seconds = BigInt( testPair[0] )
+            const expectedHoursPassed = BigInt( testPair[1] )
+
+            await fastForwardTime( seconds )
+
+            const minutesPassed = await troveManagerTester.minutes_passed_since_last_fee_op()
+
+            expect(  expectedHoursPassed ).to.eq( minutesPassed )
+        }
     } )
-    it.skip( "minutesPassedSinceLastFeeOp(): returns minutes passed between time of last fee operation and current block.timestamp, rounded down to nearest minutes", async () => {
-        //for ( const testPair of secondsToMinutesRoundedDown ) {
-            //await troveManagerTester.setLastFeeOpTimeToNow()
 
-            //const seconds = testPair[0]
-            //const expectedHoursPassed = testPair[1]
+    it( "decayBaseRateFromBorrowing(): returns the initial base rate for no time increase", async () => {
+        await troveManagerTester.set_base_rate( dec( 5, 17 ) )
+        await troveManagerTester.set_last_fee_op_time_to_now()
 
-            //await th.fastForwardTime( seconds, web3.currentProvider )
+        const baseRateBefore = await troveManagerTester.base_rate()
+        expect( baseRateBefore ).to.eq( dec( 5, 17 ) )
 
-            //const minutesPassed = await troveManagerTester.minutesPassedSinceLastFeeOp()
+        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+        const baseRateAfter = await troveManagerTester.base_rate()
 
-            //assert.equal( expectedHoursPassed.toString(), minutesPassed.toString() )
-        //}
+        expect( baseRateBefore ).to.eq( baseRateAfter )
     } )
 
 } )

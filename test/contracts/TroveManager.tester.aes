@@ -12,7 +12,7 @@
         update_last_fee_op_time()
         base_rate
 
-    entrypoint minutes_passed_since_last_fee_op(): int =
+    entrypoint minutes_passed_since_last_fee_op() =
         minutes_passed_since_last_fee_op'()
 
     stateful entrypoint set_last_fee_op_time_to_now() =
@@ -29,3 +29,5 @@
 
     stateful entrypoint call_internal_remove_trove_owner(trove_owner: address) =
         remove_trove_owner(trove_owner, List.length(state.trove_owners))
+
+    entrypoint base_rate() = state.base_rate
