@@ -30,7 +30,7 @@ contract LockupContract =
 	, addresses: option(addresses)
         }
 
-    entrypoint init(unlock_time: int) =
+    entrypoint init() =
         {  
 	   addresses = None
 	 , unlock_time = 0
