@@ -23,7 +23,7 @@ contract TroveManager =
     // CONSTANTS
     //------------------------------------------------------------------------------
 
-    entrypoint seconds_in_one_minute() = 60
+    entrypoint milliseconds_in_one_minute() = 60000
     /*
      * Half-life of 12h. 12h = 720 min
      * (1/2) = d^720 => d = (1/2)^(1/720)
@@ -1325,7 +1325,7 @@ contract TroveManager =
     stateful function update_last_fee_op_time() =
         let time_passed = SafeMath.sub(get_timestamp(),state.last_fee_operation_time)
 
-        if (time_passed >= seconds_in_one_minute())
+        if (time_passed >= milliseconds_in_one_minute())
             put(state{ last_fee_operation_time = get_timestamp() })
             Chain.event(LastFeeOpTimeUpdated(get_timestamp()))
 
@@ -1678,7 +1678,7 @@ contract TroveManager =
     function minutes_passed_since_last_fee_op'(): int =
         SafeMath.div(
           SafeMath.sub(get_timestamp(),state.last_fee_operation_time),
-          seconds_in_one_minute() )
+          milliseconds_in_one_minute() )
 
     // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
     function get_current_icr(borrower: address, price: int) =

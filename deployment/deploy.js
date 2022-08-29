@@ -29,7 +29,9 @@ const deploy = async ( secretKey, network, compiler ) => {
     const deployContract = contractUtils.deployContract(
         await contractUtils.createSdkInstance( {
             wallet, network, compiler
-        } ), true, true
+        } ),
+        true,
+        true //WARNING: this should be set to false when deploy to PRODUCTION
     )
 
     const deployments =
@@ -53,6 +55,9 @@ const deploy = async ( secretKey, network, compiler ) => {
                 [],
             ),
             /* 06 */ () => deployContract( './test/contracts/LiquityMathTester.aes',
+                [],
+            ),
+            /* 07 */ () => deployContract( './test/contracts/TimeOffsetForDebug.aes',
                 [],
             ),
         ]
