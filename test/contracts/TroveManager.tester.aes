@@ -7,6 +7,7 @@
 
     stateful entrypoint unprotected_decay_base_rate_from_borrowing(): int =
         let base_rate = calc_decayed_base_rate'()
+        put(state{base_rate = base_rate})
         require(base_rate >= 0 && base_rate =< Utils.decimal_precision(),"base_rate negative or less then decimal_precision")
 
         update_last_fee_op_time()
