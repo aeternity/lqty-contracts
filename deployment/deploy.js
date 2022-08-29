@@ -65,7 +65,7 @@ const deploy = async ( secretKey, network, compiler ) => {
                 [],
 					 ),
             /* 09 */ () => deployContract( './contracts/lqty/LockupContract.aes',
-                [10],
+                [],
             ),
             /* 05 */ () => deployContract( './test/contracts/PriceFeedTestnet.aes',
                 [],
