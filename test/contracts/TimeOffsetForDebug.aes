@@ -1,0 +1,9 @@
+// This interface is used solely for the purpose of debug.
+//Don't use such a contract for any other purpose than simulating the time
+contract TimestampOffsetForDebug =
+    record state = { offset: int }
+    entrypoint init() = { offset = 0 }
+
+    stateful entrypoint fast_forward_time(ms: int) = put(state{ offset @ p = p + ms })
+
+    entrypoint get_timestamp_offset () = state.offset
