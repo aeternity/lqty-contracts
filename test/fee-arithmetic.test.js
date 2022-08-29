@@ -1,10 +1,10 @@
-const { expect } = require( 'chai' )
+const { expect, assert } = require( 'chai' )
 
 import utils from '../utils/contract-utils'
 import { wrapContractInstance } from '../utils/wrapper'
 import { setupDeployment, connectCoreContracts  } from './shared/deploymentHelper'
 import { testHelper } from './shared/testHelper'
-const { dec } = testHelper
+const { dec, getDifference } = testHelper
 
 import wallets from '../config/wallets.json'
 const accounts = wallets.defaultWallets.map( x => x.publicKey )
@@ -15,7 +15,9 @@ describe( 'Fee arithmetic tests', () => {
     let contracts
     let LQTYContracts
     let timeOffsetForDebugger
-    const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time( seconds * 1000n )
+    const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time(
+        BigInt( seconds ) * 1000n
+    )
 
     utils.beforeEachWithSnapshot( 'deploy contract', async () => {
         const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
@@ -357,7 +359,9 @@ describe( 'Fee arithmetic tests', () => {
     } )
     it( "minutesPassedSinceLastFeeOp(): returns minutes passed between time of last fee operation and current block.timestamp, rounded down to nearest minutes", async () => {
         const xs = secondsToMinutesRoundedDown // .slice( 0, 10 )
+        let i = 0
         for ( const testPair of xs ) {
+            console.log( `${i++}/${xs.length - 1}` )
             await troveManagerTester.set_last_fee_op_time_to_now()
 
             const seconds = BigInt( testPair[0] )
@@ -384,4 +388,193 @@ describe( 'Fee arithmetic tests', () => {
         expect( baseRateBefore ).to.eq( baseRateAfter )
     } )
 
+    it( "decayBaseRateFromBorrowing(): returns the initial base rate for less than one minute passed ", async () => {
+        await troveManagerTester.set_base_rate( dec( 5, 17 ) )
+        await troveManagerTester.set_last_fee_op_time_to_now()
+
+    // 1 second
+        const baseRateBefore_1 = await troveManagerTester.base_rate()
+        expect( baseRateBefore_1 ).to.eq( dec( 5, 17 ) )
+
+        await fastForwardTime( 1n  )
+
+        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+        const baseRateAfter_1 = await troveManagerTester.base_rate()
+
+        expect( baseRateBefore_1 ).to.eq( baseRateAfter_1 )
+
+    // 17 seconds
+        await troveManagerTester.set_last_fee_op_time_to_now()
+
+        const baseRateBefore_2 = await troveManagerTester.base_rate()
+        await fastForwardTime( 17 )
+
+        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+        const baseRateAfter_2 = await troveManagerTester.base_rate()
+
+        expect( baseRateBefore_2 ).to.eq( baseRateAfter_2 )
+
+    // 29 seconds
+        await troveManagerTester.set_last_fee_op_time_to_now()
+
+        const baseRateBefore_3 = await troveManagerTester.base_rate()
+        await fastForwardTime( 29 )
+
+        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+        const baseRateAfter_3 = await troveManagerTester.base_rate()
+
+        expect( baseRateBefore_3 ).to.eq( baseRateAfter_3 )
+    // 50 seconds
+        await troveManagerTester.set_last_fee_op_time_to_now()
+
+        const baseRateBefore_4 = await troveManagerTester.base_rate()
+        await fastForwardTime( 50 )
+
+        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+        const baseRateAfter_4 = await troveManagerTester.base_rate()
+
+        expect( baseRateBefore_4 ).to.eq( baseRateAfter_4 )
+
+    // (cant quite test up to 59 seconds, as execution of the final tx takes >1 second before the block is mined)
+    } )
+
+    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.01", async () => {
+    // baseRate = 0.01
+        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+      // Set base rate to 0.01 in TroveManager
+            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+            await troveManagerTester.set_base_rate( dec( 1, 16 ) )
+            const contractBaseRate = await troveManagerTester.base_rate()
+            expect( contractBaseRate ).to.eq( dec( 1, 16 ) )
+
+            const startBaseRate = '0.01'
+
+            const secondsPassed = decayBaseRateResults.seconds[i]
+            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            await troveManagerTester.set_last_fee_op_time_to_now()
+
+      // Progress time
+            await fastForwardTime( secondsPassed )
+
+            await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+            const decayedBaseRate = await troveManagerTester.base_rate()
+
+            //const minutesPassed = secondsPassed / 60
+
+            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
+            //console.log(
+                //`starting baseRate: ${startBaseRate},
+                 //secondsPassed: ${secondsPassed},
+                 //minutesPassed: ${minutesPassed},
+                 //expectedDecayedBaseRate: ${expectedDecayedBaseRate},
+                 //decayedBaseRate: ${decayedBaseRate},
+                 //error: ${error}`
+            //)
+            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 100000 ) // allow absolute error tolerance of 1e-13
+        }
+    } )
+    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.1", async () => {
+    // baseRate = 0.1
+        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+      // Set base rate to 0.1 in TroveManager
+            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+            await troveManagerTester.set_base_rate( dec( 1, 17 ) )
+            const contractBaseRate = await troveManagerTester.base_rate()
+            assert.equal( contractBaseRate, dec( 1, 17 ) )
+
+            const startBaseRate = '0.1'
+
+            const secondsPassed = decayBaseRateResults.seconds[i]
+            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            await troveManagerTester.set_last_fee_op_time_to_now()
+
+      // Progress time
+            await fastForwardTime( secondsPassed )
+
+            await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+            const decayedBaseRate = await troveManagerTester.base_rate()
+
+            //const minutesPassed = secondsPassed / 60
+
+            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
+      // console.log(
+      //   `starting baseRate: ${startBaseRate},
+      //   minutesPassed: ${minutesPassed},
+      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
+      //   decayedBaseRate: ${decayedBaseRate},
+      //   error: ${error}`
+      // )
+            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+        }
+    } )
+    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.34539284", async () => {
+    // baseRate = 0.34539284
+        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+      // Set base rate to 0.1 in TroveManager
+            await troveManagerTester.set_base_rate( 345392840000000000n )
+            await troveManagerTester.set_base_rate( 345392840000000000n ) //TODO: ??? why this
+
+            const startBaseRate = '0.34539284'
+
+            const secondsPassed = decayBaseRateResults.seconds[i]
+            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            await troveManagerTester.set_last_fee_op_time_to_now()
+
+      // Progress time
+            await fastForwardTime( secondsPassed )
+
+            await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+            const decayedBaseRate = await troveManagerTester.base_rate()
+
+            //const minutesPassed = secondsPassed / 60
+
+            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
+      // console.log(
+      //   `starting baseRate: ${startBaseRate},
+      //   minutesPassed: ${minutesPassed},
+      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
+      //   decayedBaseRate: ${decayedBaseRate},
+      //   error: ${error}`
+      // )
+
+            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+        }
+    } )
+
+    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.9976", async () => {
+    // baseRate = 0.9976
+        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+      // Set base rate to 0.9976 in TroveManager
+            await troveManagerTester.set_base_rate( 997600000000000000n )
+            await troveManagerTester.set_base_rate( 997600000000000000n ) //TODO: why this ??
+
+            const startBaseRate = '0.9976'
+
+            const secondsPassed = decayBaseRateResults.seconds[i]
+            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            await troveManagerTester.set_last_fee_op_time_to_now()
+
+      // progress time
+            await fastForwardTime( secondsPassed )
+
+            await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+            const decayedBaseRate = await troveManagerTester.base_rate()
+
+            //const minutesPassed = secondsPassed / 60
+
+            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
+
+      // console.log(
+      //   `starting baseRate: ${startBaseRate},
+      //   minutesPassed: ${minutesPassed},
+      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
+      //   decayedBaseRate: ${decayedBaseRate},
+      //   error: ${error}`
+      // )
+
+            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+        }
+    } )
 } )
