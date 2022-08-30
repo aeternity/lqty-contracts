@@ -14,5 +14,5 @@ contract LiquityMathTester =
         /*LiquityMath.dec_pow(base, n)*/
 
     // External wrapper
-    function call_dec_pow(base: int, n: int): int =
+    entrypoint call_dec_pow(base: int, n: int): int =
         LiquityMath.dec_pow(base, n)

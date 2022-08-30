@@ -1,580 +1,592 @@
 const { expect, assert } = require( 'chai' )
+const Decimal = require( "decimal.js" )
 
 import utils from '../utils/contract-utils'
 import { wrapContractInstance } from '../utils/wrapper'
 import { setupDeployment, connectCoreContracts  } from './shared/deploymentHelper'
-import { testHelper } from './shared/testHelper'
-const { dec, getDifference } = testHelper
+import {
+    testHelper, timeValues, randDecayFactor,
+    reduceDecimals, makeBN
+} from './shared/testHelper'
+const { dec, getDifference,  } = testHelper
+import { secondsToMinutesRoundedDown, decayBaseRateResults, exponentiationResults } from './data/fee-arithmetic.data'
 
 import wallets from '../config/wallets.json'
 const accounts = wallets.defaultWallets.map( x => x.publicKey )
 
 describe( 'Fee arithmetic tests', () => {
-    let troveManagerTester
-    let mathTester
-    let contracts
-    let LQTYContracts
-    let timeOffsetForDebugger
-    const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time(
-        BigInt( seconds ) * 1000n
-    )
-
-    utils.beforeEachWithSnapshot( 'deploy contract', async () => {
-        const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
-        contracts = await deployLiquityCore()
-        LQTYContracts = await deployLQTYContracts()
-        troveManagerTester = contracts.troveManager
-
-        const deployContract = utils.deployContract( contracts.sdk )
-        mathTester = wrapContractInstance(
-            await deployContract( './test/contracts/LiquityMathTester.aes', )
+    describe( 'troveManager', () => {
+        let troveManagerTester
+        let contracts
+        let LQTYContracts
+        let timeOffsetForDebugger
+        const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time(
+            BigInt( seconds ) * 1000n
         )
+        //TODO: after lqty is implemented use this
+        const [ bountyAddress, lpRewardsAddress, multisig ] = accounts.slice( accounts.length - 3, accounts.length )
 
-        timeOffsetForDebugger = wrapContractInstance(
-            await deployContract( './test/contracts/TimeOffsetForDebug.aes', )
-        )
+        utils.beforeEachWithSnapshot( 'deploy contract', async () => {
+            const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
+            contracts = await deployLiquityCore()
+            LQTYContracts = await deployLQTYContracts()
+            troveManagerTester = contracts.troveManager
 
-        await troveManagerTester.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )
+            const deployContract = utils.deployContract( contracts.sdk )
 
-        //connect contracts
-        console.log( "connecting contracts" )
-        await connectCoreContracts( contracts, LQTYContracts )
+            timeOffsetForDebugger = wrapContractInstance(
+                await deployContract( './test/contracts/TimeOffsetForDebug.aes', )
+            )
 
-    } )
+            await troveManagerTester.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )
 
-    const [ bountyAddress, lpRewardsAddress, multisig ] = accounts.slice( accounts.length - 3, accounts.length )
+            //connect contracts
+            console.log( "connecting contracts" )
+            await connectCoreContracts( contracts, LQTYContracts )
 
-    const secondsToMinutesRoundedDown = [
-        [ 0, 0 ],
-        [ 1, 0 ],
-        [ 3, 0 ],
-        [ 37, 0 ],
-        [ 432, 7 ],
-        [ 1179, 19 ],
-        [ 2343, 39 ],
-        [ 3598, 59 ],
-        [ 3600, 60 ],
-        [ 10000, 166 ],
-        [ 15000, 250 ],
-        [ 17900, 298 ],
-        [ 18000, 300 ],
-        [ 61328, 1022 ],
-        [ 65932, 1098 ],
-        [ 79420, 1323 ],
-        [ 86147, 1435 ],
-        [ 86400, 1440 ],
-        [ 35405, 590 ],
-        [ 100000, 1666 ],
-        [ 604342, 10072 ],
-        [ 604800, 10080 ],
-        [ 1092099, 18201 ],
-        [ 2591349, 43189 ],
-        [ 2592000, 43200 ],
-        [ 5940183, 99003 ],
-        [ 8102940, 135049 ],
-        [ 31535342, 525589 ],
-        [ 31536000, 525600 ],
-        [ 56809809, 946830 ],
-        [ 315360000, 5256000 ],
-        [ 793450405, 13224173 ],
-        [ 1098098098, 18301634 ],
-        [ 3153600000, 52560000 ],
-        [ 4098977899, 68316298 ],
-        [ 9999999999, 166666666 ],
-        [ 31535999000, 525599983 ],
-        [ 31536000000, 525600000 ],
-        [ 50309080980, 838484683 ],
-    ]
+        } )
 
-  /* Object holds arrays for seconds passed, and the corresponding expected decayed base rate, given an initial
-  base rate */
-
-    const decayBaseRateResults = {
-        'seconds': [
-            0,
-            1,
-            3,
-            37,
-            432,
-            1179,
-            2343,
-            3547,
-            3600,	 // 1 hour
-            10000,
-            15000,
-            17900,
-            18000,	  // 5 hours
-            61328,
-            65932,
-            79420,
-            86147,
-            86400,	  // 1 day
-            35405,
-            100000,
-            604342,
-            604800,	  // 1 week
-            1092099,
-            2591349,
-            2592000,	  // 1 month
-            5940183,
-            8102940,
-            31535342,
-            31536000, // 1 year
-            56809809,
-            315360000,	  // 10 years
-            793450405,
-            1098098098,
-            3153600000,	  // 100 years
-            4098977899,
-            9999999999,
-            31535999000,
-            31536000000,	 // 1000 years
-            50309080980,
-        ],
-        '0.01': [
-            10000000000000000,
-            10000000000000000,
-            10000000000000000,
-            10000000000000000,
-            9932837247526310,
-            9818748881063180,
-            9631506200700280,
-            9447834221836550,
-            9438743126816710,
-            8523066208268240,
-            7860961982890640,
-            7505973548021970,
-            7491535384382500,
-            3738562496681640,
-            3474795549604300,
-            2798062319068760,
-            2512062814236710,
-            2499999999998550,
-            5666601111155830,
-            2011175814816220,
-            615070415779,
-            610351562497,
-            245591068,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ],
-        '0.1': [
-            100000000000000000,
-            100000000000000000,
-            100000000000000000,
-            100000000000000000,
-            99328372475263100,
-            98187488810631800,
-            96315062007002900,
-            94478342218365500,
-            94387431268167100,
-            85230662082682400,
-            78609619828906400,
-            75059735480219700,
-            74915353843825000,
-            37385624966816400,
-            34747955496043000,
-            27980623190687600,
-            25120628142367100,
-            24999999999985500,
-            56666011111558300,
-            20111758148162200,
-            6150704157794,
-            6103515624975,
-            2455910681,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ],
-        '0.34539284': [
-            345392840000000000,
-            345392840000000000,
-            345392840000000000,
-            345392840000000000,
-            343073086618089000,
-            339132556127723000,
-            332665328013748000,
-            326321429372932000,
-            326007429460170000,
-            294380604318180000,
-            271511998440263000,
-            259250952071618000,
-            258752268237236000,
-            129127271824636000,
-            120016950329719000,
-            96643069088014400,
-            86764850966761100,
-            86348209999949800,
-            195720345092927000,
-            69464572641868900,
-            21244091770604,
-            21081105956945,
-            8482539649,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ],
-        '0.9976': [
-            997600000000000000,
-            997600000000000000,
-            997600000000000000,
-            997600000000000000,
-            990899843813224000,
-            979518388374863000,
-            960839058581860000,
-            942515941970414000,
-            941609014331235000,
-            850261084936840000,
-            784209567413171000,
-            748795921150671000,
-            747355569945998000,
-            372958994668961000,
-            346645604028525000,
-            279134696950299000,
-            250603386348255000,
-            249399999999855000,
-            565300126848906000,
-            200634899286066000,
-            61359424678158,
-            60888671874752,
-            24500164955,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]
-    }
-
-  // Exponent in range [2, 300]
-    const exponentiationResults = [
-        [ 187706062567632000, 17, 445791 ],
-        [ 549137589365708000, 2, 301552092054380000 ],
-        [ 14163921244333700, 3, 2841518643583 ],
-        [ 173482812472018000, 2, 30096286223201300 ],
-        [ 89043101634399300, 2, 7928673948673970 ],
-        [ 228676956496486000, 2, 52293150432495800 ],
-        [ 690422882634616000, 8, 51632293155573900 ],
-        [ 88730376626724100, 11, 2684081 ],
-        [ 73384846339964600, 5, 2128295594269 ],
-        [ 332854710158557000, 10, 16693487237081 ],
-        [ 543415023125456000, 24, 439702946262 ],
-        [ 289299391854347000, 2, 83694138127294900 ],
-        [ 356290645277924000, 2, 126943023912560000 ],
-        [ 477806998132950000, 8, 2716564683301040 ],
-        [ 410750871076822000, 6, 4802539645325750 ],
-        [ 475222270242414000, 4, 51001992001158600 ],
-        [ 121455252120304000, 22, 0 ],
-        [ 9639247474367520, 4, 8633214298 ],
-        [ 637853277178133000, 2, 406856803206885000 ],
-        [ 484746955319000000, 6, 12974497294315000 ],
-        [ 370594630844984000, 14, 921696040698 ],
-        [ 289829200819417000, 12, 351322263034 ],
-        [ 229325825269870000, 8, 7649335694527 ],
-        [ 265776787719080000, 12, 124223733254 ],
-        [ 461409786304156000, 27, 851811777 ],
-        [ 240236841088914000, 11, 153828106713 ],
-        [ 23036079879643700, 2, 530660976221324 ],
-        [ 861616242485528000, 97, 531430041443 ],
-        [ 72241661275119400, 212, 0 ],
-        [ 924071964863292000, 17, 261215237312535000 ],
-        [ 977575971186712000, 19, 649919912701292000 ],
-        [ 904200910071210000, 15, 220787304397256000 ],
-        [ 858551742150349000, 143, 337758087 ],
-        [ 581850663606974000, 68, 102 ],
-        [ 354836074035232000, 16, 63160309272 ],
-        [ 968639062260900000, 37, 307604877091227000 ],
-        [ 784478611520428000, 140, 1743 ],
-        [ 61314555619941600, 13, 173 ],
-        [ 562295998606858000, 71, 2 ],
-        [ 896709855620154000, 20, 112989701464696000 ],
-        [ 8484527608110470, 111, 0 ],
-        [ 33987471529490900, 190, 0 ],
-        [ 109333102690035000, 59, 0 ],
-        [ 352436592744656000, 4, 15428509626763400 ],
-        [ 940730690913636000, 111, 1134095778412580 ],
-        [ 665800835711181000, 87, 428 ],
-        [ 365267526644046000, 208, 0 ],
-        [ 432669515365048000, 171, 0 ],
-        [ 457498365370101000, 40, 26036 ],
-        [ 487046034636363000, 12, 178172281758289 ],
-        [ 919877008002166000, 85, 826094891277916 ],
-    ]
-    it( "minutesPassedSinceLastFeeOp(): returns minutes passed for no time increase", async () => {
-        await troveManagerTester.set_last_fee_op_time_to_now()
-        const minutesPassed = await troveManagerTester.minutes_passed_since_last_fee_op()
-
-        expect( minutesPassed ).to.eq( 0n )
-    } )
-    it( "minutesPassedSinceLastFeeOp(): returns minutes passed between time of last fee operation and current block.timestamp, rounded down to nearest minutes", async () => {
-        const xs = secondsToMinutesRoundedDown // .slice( 0, 10 )
-        let i = 0
-        for ( const testPair of xs ) {
-            console.log( `${i++}/${xs.length - 1}` )
+        it( "minutesPassedSinceLastFeeOp(): returns minutes passed for no time increase", async () => {
             await troveManagerTester.set_last_fee_op_time_to_now()
-
-            const seconds = BigInt( testPair[0] )
-            const expectedHoursPassed = BigInt( testPair[1] )
-
-            await fastForwardTime( seconds )
-
             const minutesPassed = await troveManagerTester.minutes_passed_since_last_fee_op()
 
-            expect(  expectedHoursPassed ).to.eq( minutesPassed )
-        }
-    } )
+            expect( minutesPassed ).to.eq( 0n )
+        } )
+        it( "minutesPassedSinceLastFeeOp(): returns minutes passed between time of last fee operation and current block.timestamp, rounded down to nearest minutes", async () => {
+            const xs = secondsToMinutesRoundedDown // .slice( 0, 10 )
+            let i = 0
+            for ( const testPair of xs ) {
+                console.log( `${i++}/${xs.length - 1}` )
+                await troveManagerTester.set_last_fee_op_time_to_now()
 
-    it( "decayBaseRateFromBorrowing(): returns the initial base rate for no time increase", async () => {
-        await troveManagerTester.set_base_rate( dec( 5, 17 ) )
-        await troveManagerTester.set_last_fee_op_time_to_now()
+                const seconds = BigInt( testPair[0] )
+                const expectedHoursPassed = BigInt( testPair[1] )
 
-        const baseRateBefore = await troveManagerTester.base_rate()
-        expect( baseRateBefore ).to.eq( dec( 5, 17 ) )
+                await fastForwardTime( seconds )
 
-        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-        const baseRateAfter = await troveManagerTester.base_rate()
+                const minutesPassed = await troveManagerTester.minutes_passed_since_last_fee_op()
 
-        expect( baseRateBefore ).to.eq( baseRateAfter )
-    } )
+                expect(  expectedHoursPassed ).to.eq( minutesPassed )
+            }
+        } )
 
-    it( "decayBaseRateFromBorrowing(): returns the initial base rate for less than one minute passed ", async () => {
-        await troveManagerTester.set_base_rate( dec( 5, 17 ) )
-        await troveManagerTester.set_last_fee_op_time_to_now()
-
-    // 1 second
-        const baseRateBefore_1 = await troveManagerTester.base_rate()
-        expect( baseRateBefore_1 ).to.eq( dec( 5, 17 ) )
-
-        await fastForwardTime( 1n  )
-
-        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-        const baseRateAfter_1 = await troveManagerTester.base_rate()
-
-        expect( baseRateBefore_1 ).to.eq( baseRateAfter_1 )
-
-    // 17 seconds
-        await troveManagerTester.set_last_fee_op_time_to_now()
-
-        const baseRateBefore_2 = await troveManagerTester.base_rate()
-        await fastForwardTime( 17 )
-
-        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-        const baseRateAfter_2 = await troveManagerTester.base_rate()
-
-        expect( baseRateBefore_2 ).to.eq( baseRateAfter_2 )
-
-    // 29 seconds
-        await troveManagerTester.set_last_fee_op_time_to_now()
-
-        const baseRateBefore_3 = await troveManagerTester.base_rate()
-        await fastForwardTime( 29 )
-
-        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-        const baseRateAfter_3 = await troveManagerTester.base_rate()
-
-        expect( baseRateBefore_3 ).to.eq( baseRateAfter_3 )
-    // 50 seconds
-        await troveManagerTester.set_last_fee_op_time_to_now()
-
-        const baseRateBefore_4 = await troveManagerTester.base_rate()
-        await fastForwardTime( 50 )
-
-        await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-        const baseRateAfter_4 = await troveManagerTester.base_rate()
-
-        expect( baseRateBefore_4 ).to.eq( baseRateAfter_4 )
-
-    // (cant quite test up to 59 seconds, as execution of the final tx takes >1 second before the block is mined)
-    } )
-
-    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.01", async () => {
-    // baseRate = 0.01
-        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
-      // Set base rate to 0.01 in TroveManager
-            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
-            await troveManagerTester.set_base_rate( dec( 1, 16 ) )
-            const contractBaseRate = await troveManagerTester.base_rate()
-            expect( contractBaseRate ).to.eq( dec( 1, 16 ) )
-
-            const startBaseRate = '0.01'
-
-            const secondsPassed = decayBaseRateResults.seconds[i]
-            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+        it( "decayBaseRateFromBorrowing(): returns the initial base rate for no time increase", async () => {
+            await troveManagerTester.set_base_rate( dec( 5, 17 ) )
             await troveManagerTester.set_last_fee_op_time_to_now()
 
-      // Progress time
-            await fastForwardTime( secondsPassed )
+            const baseRateBefore = await troveManagerTester.base_rate()
+            expect( baseRateBefore ).to.eq( dec( 5, 17 ) )
 
             await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-            const decayedBaseRate = await troveManagerTester.base_rate()
+            const baseRateAfter = await troveManagerTester.base_rate()
 
-            //const minutesPassed = secondsPassed / 60
+            expect( baseRateBefore ).to.eq( baseRateAfter )
+        } )
 
-            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
-            //console.log(
-                //`starting baseRate: ${startBaseRate},
-                 //secondsPassed: ${secondsPassed},
-                 //minutesPassed: ${minutesPassed},
-                 //expectedDecayedBaseRate: ${expectedDecayedBaseRate},
-                 //decayedBaseRate: ${decayedBaseRate},
-                 //error: ${error}`
-            //)
-            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 100000 ) // allow absolute error tolerance of 1e-13
-        }
-    } )
-    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.1", async () => {
-    // baseRate = 0.1
-        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
-      // Set base rate to 0.1 in TroveManager
-            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
-            await troveManagerTester.set_base_rate( dec( 1, 17 ) )
-            const contractBaseRate = await troveManagerTester.base_rate()
-            assert.equal( contractBaseRate, dec( 1, 17 ) )
-
-            const startBaseRate = '0.1'
-
-            const secondsPassed = decayBaseRateResults.seconds[i]
-            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+        it( "decayBaseRateFromBorrowing(): returns the initial base rate for less than one minute passed ", async () => {
+            await troveManagerTester.set_base_rate( dec( 5, 17 ) )
             await troveManagerTester.set_last_fee_op_time_to_now()
 
-      // Progress time
-            await fastForwardTime( secondsPassed )
+            // 1 second
+            const baseRateBefore_1 = await troveManagerTester.base_rate()
+            expect( baseRateBefore_1 ).to.eq( dec( 5, 17 ) )
+
+            await fastForwardTime( 1n  )
 
             await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-            const decayedBaseRate = await troveManagerTester.base_rate()
+            const baseRateAfter_1 = await troveManagerTester.base_rate()
 
-            //const minutesPassed = secondsPassed / 60
+            expect( baseRateBefore_1 ).to.eq( baseRateAfter_1 )
 
-            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
-      // console.log(
-      //   `starting baseRate: ${startBaseRate},
-      //   minutesPassed: ${minutesPassed},
-      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
-      //   decayedBaseRate: ${decayedBaseRate},
-      //   error: ${error}`
-      // )
-            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
-        }
-    } )
-    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.34539284", async () => {
-    // baseRate = 0.34539284
-        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
-            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
-      // Set base rate to 0.1 in TroveManager
-            await troveManagerTester.set_base_rate( 345392840000000000n )
-            await troveManagerTester.set_base_rate( 345392840000000000n ) //TODO: ??? why this
-
-            const startBaseRate = '0.34539284'
-
-            const secondsPassed = decayBaseRateResults.seconds[i]
-            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            // 17 seconds
             await troveManagerTester.set_last_fee_op_time_to_now()
 
-      // Progress time
-            await fastForwardTime( secondsPassed )
+            const baseRateBefore_2 = await troveManagerTester.base_rate()
+            await fastForwardTime( 17 )
 
             await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-            const decayedBaseRate = await troveManagerTester.base_rate()
+            const baseRateAfter_2 = await troveManagerTester.base_rate()
 
-            //const minutesPassed = secondsPassed / 60
+            expect( baseRateBefore_2 ).to.eq( baseRateAfter_2 )
 
-            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
-      // console.log(
-      //   `starting baseRate: ${startBaseRate},
-      //   minutesPassed: ${minutesPassed},
-      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
-      //   decayedBaseRate: ${decayedBaseRate},
-      //   error: ${error}`
-      // )
-
-            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
-        }
-    } )
-
-    it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.9976", async () => {
-    // baseRate = 0.9976
-        for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
-            console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
-      // Set base rate to 0.9976 in TroveManager
-            await troveManagerTester.set_base_rate( 997600000000000000n )
-            await troveManagerTester.set_base_rate( 997600000000000000n ) //TODO: why this ??
-
-            const startBaseRate = '0.9976'
-
-            const secondsPassed = decayBaseRateResults.seconds[i]
-            const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+            // 29 seconds
             await troveManagerTester.set_last_fee_op_time_to_now()
 
-      // progress time
-            await fastForwardTime( secondsPassed )
+            const baseRateBefore_3 = await troveManagerTester.base_rate()
+            await fastForwardTime( 29 )
 
             await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
-            const decayedBaseRate = await troveManagerTester.base_rate()
+            const baseRateAfter_3 = await troveManagerTester.base_rate()
 
-            //const minutesPassed = secondsPassed / 60
+            expect( baseRateBefore_3 ).to.eq( baseRateAfter_3 )
+            // 50 seconds
+            await troveManagerTester.set_last_fee_op_time_to_now()
 
-            //const error = decayedBaseRate - BigInt( expectedDecayedBaseRate )
+            const baseRateBefore_4 = await troveManagerTester.base_rate()
+            await fastForwardTime( 50 )
 
-      // console.log(
-      //   `starting baseRate: ${startBaseRate},
-      //   minutesPassed: ${minutesPassed},
-      //   expectedDecayedBaseRate: ${expectedDecayedBaseRate},
-      //   decayedBaseRate: ${decayedBaseRate},
-      //   error: ${error}`
-      // )
+            await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+            const baseRateAfter_4 = await troveManagerTester.base_rate()
 
-            assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
-        }
+            expect( baseRateBefore_4 ).to.eq( baseRateAfter_4 )
+
+        // (cant quite test up to 59 seconds, as execution of the final tx takes >1 second before the block is mined)
+        } )
+
+        it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.01", async () => {
+            // baseRate = 0.01
+            for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+                // Set base rate to 0.01 in TroveManager
+                console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+                await troveManagerTester.set_base_rate( dec( 1, 16 ) )
+                const contractBaseRate = await troveManagerTester.base_rate()
+                expect( contractBaseRate ).to.eq( dec( 1, 16 ) )
+
+                const startBaseRate = '0.01'
+
+                const secondsPassed = decayBaseRateResults.seconds[i]
+                const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+                await troveManagerTester.set_last_fee_op_time_to_now()
+
+                // Progress time
+                await fastForwardTime( secondsPassed )
+
+                await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+                const decayedBaseRate = await troveManagerTester.base_rate()
+
+                assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 100000 ) // allow absolute error tolerance of 1e-13
+            }
+        } )
+        it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.1", async () => {
+            // baseRate = 0.1
+            for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+                // Set base rate to 0.1 in TroveManager
+                console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+                await troveManagerTester.set_base_rate( dec( 1, 17 ) )
+                const contractBaseRate = await troveManagerTester.base_rate()
+                assert.equal( contractBaseRate, dec( 1, 17 ) )
+
+                const startBaseRate = '0.1'
+
+                const secondsPassed = decayBaseRateResults.seconds[i]
+                const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+                await troveManagerTester.set_last_fee_op_time_to_now()
+
+                // Progress time
+                await fastForwardTime( secondsPassed )
+
+                await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+                const decayedBaseRate = await troveManagerTester.base_rate()
+
+                assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+            }
+        } )
+        it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.34539284", async () => {
+            // baseRate = 0.34539284
+            for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+                console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+                // Set base rate to 0.1 in TroveManager
+                await troveManagerTester.set_base_rate( 345392840000000000n )
+                await troveManagerTester.set_base_rate( 345392840000000000n ) //TODO: ??? why this
+
+                const startBaseRate = '0.34539284'
+
+                const secondsPassed = decayBaseRateResults.seconds[i]
+                const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+                await troveManagerTester.set_last_fee_op_time_to_now()
+
+                // Progress time
+                await fastForwardTime( secondsPassed )
+
+                await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+                const decayedBaseRate = await troveManagerTester.base_rate()
+
+                assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+            }
+        } )
+
+        it( "decayBaseRateFromBorrowing(): returns correctly decayed base rate, for various durations. Initial baseRate = 0.9976", async () => {
+            // baseRate = 0.9976
+            for ( let i = 0; i < decayBaseRateResults.seconds.length; i++ ) {
+                console.log( `${i}/${decayBaseRateResults.seconds.length - 1}` )
+                // Set base rate to 0.9976 in TroveManager
+                await troveManagerTester.set_base_rate( 997600000000000000n )
+                await troveManagerTester.set_base_rate( 997600000000000000n ) //TODO: why this ??
+
+                const startBaseRate = '0.9976'
+
+                const secondsPassed = decayBaseRateResults.seconds[i]
+                const expectedDecayedBaseRate = decayBaseRateResults[startBaseRate][i]
+                await troveManagerTester.set_last_fee_op_time_to_now()
+
+                // progress time
+                await fastForwardTime( secondsPassed )
+
+                await troveManagerTester.unprotected_decay_base_rate_from_borrowing()
+                const decayedBaseRate = await troveManagerTester.base_rate()
+
+                assert.isAtMost( getDifference( expectedDecayedBaseRate, decayedBaseRate ), 1000000 ) // allow absolute error tolerance of 1e-12
+            }
+        } )
+    } )
+    describe( 'Basic exponentiation', () => {
+        let mathTester
+        before( 'deploy mathTester', async () => {
+            const sdk = await utils.createSdkInstance()
+            const deployContract = utils.deployContract( sdk )
+            mathTester = wrapContractInstance(
+                await deployContract( './test/contracts/LiquityMathTester.aes', )
+            )
+        } )
+        const maxUint128 = 340282366920938463463374607431768211455n
+        const maxUint192 = 6277101735386680763835789423207666416102355444464034512895n
+
+        // for exponent = 0, returns 1
+        it( "decPow(): for exponent = 0, returns 1, regardless of base", async () => {
+            const a = 0n
+            const b = 1n
+            const c = dec( 1, 18 )
+            const d = 123244254546n
+            const e = 990000000000000000n
+            const f = 897890990909098978678609090n
+
+            const res_a = await mathTester.call_dec_pow( a, 0 )
+            const res_b = await mathTester.call_dec_pow( b, 0 )
+            const res_c = await mathTester.call_dec_pow( c, 0 )
+            const res_d = await mathTester.call_dec_pow( d, 0 )
+            const res_e = await mathTester.call_dec_pow( e, 0 )
+            const res_f = await mathTester.call_dec_pow( f, 0 )
+            const res_g = await mathTester.call_dec_pow( f, 0 )
+            const res_max = await mathTester.call_dec_pow( f, 0 )
+
+            assert.equal( res_a, dec( 1, 18 ) )
+            assert.equal( res_b, dec( 1, 18 ) )
+            assert.equal( res_c, dec( 1, 18 ) )
+            assert.equal( res_d, dec( 1, 18 ) )
+            assert.equal( res_e, dec( 1, 18 ) )
+            assert.equal( res_f, dec( 1, 18 ) )
+            assert.equal( res_g, dec( 1, 18 ) )
+            assert.equal( res_max, dec( 1, 18 ) )
+        } )
+
+        // for exponent = 1, returns base
+        it( "decPow(): for exponent = 1, returns base, regardless of base", async () => {
+            const a = 0n
+            const b = 1n
+            const c = dec( 1, 18 )
+            const d = 123244254546n
+            const e = 990000000000000000n
+            const f = 897890990909098978678609090n
+            const g = dec( 8789789, 27 )
+
+            const res_a = await mathTester.call_dec_pow( a, 1 )
+            const res_b = await mathTester.call_dec_pow( b, 1 )
+            const res_c = await mathTester.call_dec_pow( c, 1 )
+            const res_d = await mathTester.call_dec_pow( d, 1 )
+            const res_e = await mathTester.call_dec_pow( e, 1 )
+            const res_f = await mathTester.call_dec_pow( f, 1 )
+            const res_g = await mathTester.call_dec_pow( g, 1 )
+            const res_max128 = await mathTester.call_dec_pow( maxUint128, 1 )
+            const res_max192 = await mathTester.call_dec_pow( maxUint192, 1 )
+
+            assert.equal( res_a, a )
+            assert.equal( res_b, b )
+            assert.equal( res_c, c )
+            assert.equal( res_d, d )
+            assert.equal( res_e, e )
+            assert.equal( res_f, f )
+            assert.equal( res_g, g )
+            assert.equal( res_max128, maxUint128 )
+            assert.equal( res_max192,  maxUint192 )
+        } )
+
+        // for base = 0, returns 0 for any exponent other than 1
+        it( "decPow(): for base = 0, returns 0 for any exponent other than 0", async () => {
+            const res_a = await mathTester.call_dec_pow( 0, 1 )
+            const res_b = await mathTester.call_dec_pow( 0, 3 )
+            const res_c = await mathTester.call_dec_pow( 0, 17 )
+            const res_d = await mathTester.call_dec_pow( 0, 44 )
+            const res_e = await mathTester.call_dec_pow( 0, 118 )
+            const res_f = await mathTester.call_dec_pow( 0, 1000 )
+            const res_g = await mathTester.call_dec_pow( 0, dec( 1, 6 ) )
+            const res_h = await mathTester.call_dec_pow( 0, dec( 1, 9 ) )
+            const res_i = await mathTester.call_dec_pow( 0, dec( 1, 12 ) )
+            const res_j = await mathTester.call_dec_pow( 0, dec( 1, 18 ) )
+
+            assert.equal( res_a, 0n )
+            assert.equal( res_b, 0n )
+            assert.equal( res_c, 0n )
+            assert.equal( res_d, 0n )
+            assert.equal( res_e, 0n )
+            assert.equal( res_f, 0n )
+            assert.equal( res_g, 0n )
+            assert.equal( res_h, 0n )
+            assert.equal( res_i, 0n )
+            assert.equal( res_j, 0n )
+        } )
+        // for base = 1, returns 1 for any exponent
+        it( "decPow(): for base = 1, returns 1 for any exponent", async () => {
+            const ONE = dec( 1, 18 )
+            const res_a = await mathTester.call_dec_pow( ONE, 1 )
+            const res_b = await mathTester.call_dec_pow( ONE, 3 )
+            const res_c = await mathTester.call_dec_pow( ONE, 17 )
+            const res_d = await mathTester.call_dec_pow( ONE, 44 )
+            const res_e = await mathTester.call_dec_pow( ONE, 118 )
+            const res_f = await mathTester.call_dec_pow( ONE, 1000 )
+            const res_g = await mathTester.call_dec_pow( ONE, dec( 1, 6 ) )
+            const res_h = await mathTester.call_dec_pow( ONE, dec( 1, 9 ) )
+            const res_i = await mathTester.call_dec_pow( ONE, dec( 1, 12 ) )
+            const res_j = await mathTester.call_dec_pow( ONE, dec( 1, 18 ) )
+            const res_k = await mathTester.call_dec_pow( ONE, 0 )
+
+            assert.equal( res_a, ONE )
+            assert.equal( res_b, ONE )
+            assert.equal( res_c, ONE )
+            assert.equal( res_d, ONE )
+            assert.equal( res_e, ONE )
+            assert.equal( res_f, ONE )
+            assert.equal( res_g, ONE )
+            assert.equal( res_h, ONE )
+            assert.equal( res_i, ONE )
+            assert.equal( res_j, ONE )
+            assert.equal( res_k, ONE )
+        } )
+
+        // for exponent = 2, returns base**2
+        it( "decPow(): for exponent = 2, returns the square of the base", async () => {
+            const a = dec( 1, 18 )  // 1
+            const b = dec( 15, 17 )   // 1.5
+            const c = dec( 5, 17 )  // 0.5
+            const d = dec( 321, 15 )  // 0.321
+            const e = dec( 2, 18 )  // 4
+            const f = dec( 1, 17 )  // 0.1
+            const g = dec( 1, 16 )  // 0.01
+            const h = dec( 99, 16 )  // 0.99
+            const i = dec( 125435, 15 ) // 125.435
+            const j = dec( 99999, 18 )  // 99999
+
+            const res_a = await mathTester.call_dec_pow( a, 2 )
+            const res_b = await mathTester.call_dec_pow( b, 2 )
+            const res_c = await mathTester.call_dec_pow( c, 2 )
+            const res_d = await mathTester.call_dec_pow( d, 2 )
+            const res_e = await mathTester.call_dec_pow( e, 2 )
+            const res_f = await mathTester.call_dec_pow( f, 2 )
+            const res_g = await mathTester.call_dec_pow( g, 2 )
+            const res_h = await mathTester.call_dec_pow( h, 2 )
+            const res_i = await mathTester.call_dec_pow( i, 2 )
+            const res_j = await mathTester.call_dec_pow( j, 2 )
+
+            assert.equal( res_a, 1000000000000000000n )
+            assert.equal( res_b, 2250000000000000000n )
+            assert.equal( res_c, 250000000000000000n )
+            assert.equal( res_d, 103041000000000000n )
+            assert.equal( res_e, 4000000000000000000n )
+            assert.equal( res_f, 10000000000000000n )
+            assert.equal( res_g, 100000000000000n )
+            assert.equal( res_h, 980100000000000000n )
+            assert.equal( res_i, 15733939225000000000000n )
+            assert.equal( res_j, 9999800001000000000000000000n )
+        } )
+        it( "decPow(): correct output for various bases and exponents", async () => {
+            for ( let i = 0 ; i <  exponentiationResults.length ; i++ ) {
+                console.log( `${i}/${exponentiationResults.length - 1}` )
+                const list = exponentiationResults[i]
+                const base = BigInt( list[0] )
+                const exponent = BigInt( list[1] )
+                const expectedResult = BigInt( list[2] )
+
+                const result = await mathTester.call_dec_pow( base, exponent )
+
+                assert.isAtMost( getDifference( expectedResult, result.toString() ), 10000 )  // allow absolute error tolerance of 1e-14
+            }
+        } )
+        it( "decPow(): abs. error < 1e-9 for exponent = 7776000 (seconds in three months)", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.SECONDS_IN_ONE_MONTH * 3
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.999999, 0.999999999999999999 ) // eslint-disable-line no-loss-of-precision
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                //const expectedFst =  baseAsDecimal.pow( exponent ).toFixed( 18 )
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                //console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+
+                //try {
+                assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                //} catch ( error ) {
+                //console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                //}
+            }
+        } )
+        it( "decPow(): abs. error < 1e-9 for exponent = 2592000 (seconds in one month)", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.SECONDS_IN_ONE_MONTH
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.999995, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
+
+        it( "decPow(): abs. error < 1e-9 for exponent = 43200 (minutes in one month)", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.MINUTES_IN_ONE_MONTH
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.9997, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
+
+        it( "decPow(): abs. error < 1e-9 for exponent = 525600 (minutes in one year)", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.MINUTES_IN_ONE_YEAR
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.99999, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
+
+        it( "decPow(): abs. error < 1e-9 for exponent = 2628000 (minutes in five years)", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.MINUTES_IN_ONE_YEAR * 5
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.99999, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
+
+        it( "decPow(): abs. error < 1e-9 for exponent = minutes in ten years", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.MINUTES_IN_ONE_YEAR * 10
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.99999, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
+
+        it( "decPow(): abs. error < 1e-9 for exponent = minutes in one hundred years", async () => {
+            for ( let i = 1; i <= 200; i++ ) {
+                console.log( `${i}/${200}` )
+                const exponent = timeValues.MINUTES_IN_ONE_YEAR * 100
+
+                // Use a high base to fully test high exponent, without prematurely decaying to 0
+                const base = randDecayFactor( 0.999999, 0.999999999999999999 )
+                const baseAsDecimal = reduceDecimals( base, 18 )
+
+                // Calculate actual expected value
+                let expected = Decimal.pow( baseAsDecimal.toString(), exponent ).toFixed( 18 )
+                expected = makeBN( expected )
+
+                const res = await mathTester.call_dec_pow( base, exponent )
+
+                const error = expected.minus( res ).abs()
+
+                // console.log(`run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}`)
+
+                try {
+                    assert.isAtMost( getDifference( expected, res.toString() ), 1000000000 )  // allow absolute error tolerance of 1e-9
+                } catch ( error ) {
+                    console.log( `run: ${i}. base: ${base}, exp: ${exponent}, expected: ${expected}, res: ${res}, error: ${error}` )
+                }
+            }
+        } )
     } )
 } )

@@ -3,7 +3,6 @@
 node_modules
 .aeproject-store
 *.aes.js
-test/data/*
 build/
 *.sol
 .env.local
