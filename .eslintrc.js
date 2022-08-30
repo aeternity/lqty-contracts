@@ -21,10 +21,11 @@ module.exports = {
     "ignorePatterns": ["*eslintrc*"],
     "rules":{
         "no-console": "off",
+        "no-loss-of-precision": "off",
         "comma-dangle": "off",
         "indent": ['warn',4,{
             SwitchCase: 1,
-            "ignoreComments": true,
+            "ignoreComments": false,
         }],
 
         "object-curly-spacing": ["warn", "always"],
