@@ -27,8 +27,7 @@ contract BorrowerOperations =
         }
 
     record addresses = {
-          borrower_operations: IBorrowerOperations
-        , trove_manager: ITroveManager
+          trove_manager: ITroveManager
         , stability_pool: IStabilityPool
         , default_pool: IDefaultPool
         , coll_surplus_pool: ICollSurplusPool
@@ -182,7 +181,7 @@ contract BorrowerOperations =
             addresses.active_pool.receive_ae(value=Call.value)
             withdraw_aeusd'(addresses.active_pool, addresses.aeusd_token, Call.caller, aeusd_amount, vars.net_debt)
             // Move the AEUSD gas compensation to the Gas Pool
-            let gas_compensation = aeusd_gas_compensation()
+            let gas_compensation = aeusd_gas_compensation'()
             withdraw_aeusd'(addresses.active_pool, addresses.aeusd_token, addresses.gas_pool, gas_compensation, gas_compensation)
 
             Chain.event( TroveUpdated(Call.caller, Utils.xsToPayload'(
@@ -390,7 +389,7 @@ contract BorrowerOperations =
         require_sufficient_aeusd_balance(
             addresses.aeusd_token
             , Call.caller
-            , SafeMath.sub(debt,aeusd_gas_compensation())
+            , SafeMath.sub(debt,aeusd_gas_compensation'())
             )
 
         let new_tcr = get_new_tcr_from_trove_change(coll, false, debt, false, price)
@@ -409,12 +408,12 @@ contract BorrowerOperations =
               addresses.active_pool
             , addresses.aeusd_token
             , Call.caller
-            , SafeMath.sub(debt,aeusd_gas_compensation()))
+            , SafeMath.sub(debt,aeusd_gas_compensation'()))
         repay_aeusd'(
               addresses.active_pool
             , addresses.aeusd_token
             , addresses.gas_pool
-            , aeusd_gas_compensation())
+            , aeusd_gas_compensation'())
 
         // Send the collateral back to the user
         addresses.active_pool.send_ae(Call.caller, coll) )
@@ -592,7 +591,7 @@ contract BorrowerOperations =
         require(net_debt >= min_net_debt(), "BorrowerOps: Trove's net debt must be greater than minimum")
 
     function require_valid_aeusd_repayment(current_debt: int, debt_repayment: int ) =
-        require(debt_repayment =< SafeMath.sub(current_debt,aeusd_gas_compensation()),
+        require(debt_repayment =< SafeMath.sub(current_debt,aeusd_gas_compensation'()),
             "BorrowerOps: Amount repaid must not be larger than the Trove's debt")
 
     function require_caller_is_stability_pool() = with_addresses( (addresses) =>

@@ -42,7 +42,7 @@ const getContent = ( { source, file } ) => {
             return contents[file]
         } else {
             const filesystem       = contractUtils.getFilesystem( file )
-            const contract_content = contractUtils.getContractContent( file )
+            const contract_content = contractUtils.getContractContent( file, true )
             const contentHash = hash( contract_content )
 
             const ret = {
@@ -218,7 +218,6 @@ const beforeEachWithSnapshot = ( str, work ) => {
 module.exports = {
     beforeEachWithSnapshot,
     createClient,
-    pairModelFixture,
     getContract,
     getA,
     getAK,

@@ -1,0 +1,18 @@
+@compiler >= 6
+include "../../contracts/dependencies/LiquityMath.aes"
+
+
+/* Tester contract for math functions in Math.sol library. */
+
+contract LiquityMathTester =
+
+    entrypoint call_max(a: int, b: int): int = LiquityMath.max(a, b)
+
+    //NOTE: non necessary in sophia
+    // Non-view wrapper for gas test
+    /*entrypoint call_dec_pow_tx(base: int, n: int): int =*/
+        /*LiquityMath.dec_pow(base, n)*/
+
+    // External wrapper
+    function call_dec_pow(base: int, n: int): int =
+        LiquityMath.dec_pow(base, n)

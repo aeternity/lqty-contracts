@@ -1,0 +1,31 @@
+    entrypoint get_coll_gas_compensation(coll: int) = get_coll_gas_compensation'(coll)
+
+    entrypoint compute_icr(coll: int, debt: int, price: int)=
+        LiquityMath.compute_cr(coll, debt, price)
+
+    entrypoint get_aeusd_gas_compensation() = aeusd_gas_compensation'()
+
+    stateful entrypoint unprotected_decay_base_rate_from_borrowing(): int =
+        let base_rate = calc_decayed_base_rate'()
+        require(base_rate >= 0 && base_rate =< Utils.decimal_precision(),"base_rate negative or less then decimal_precision")
+
+        update_last_fee_op_time()
+        base_rate
+
+    entrypoint minutes_passed_since_last_fee_op(): int =
+        minutes_passed_since_last_fee_op'()
+
+    stateful entrypoint set_last_fee_op_time_to_now() =
+        put(state{ last_fee_operation_time = get_timestamp() })
+
+    stateful entrypoint set_base_rate(base_rate: int) =
+        put(state{ base_rate = base_rate })
+
+    entrypoint call_get_redemption_fee(ae_drawn: int) =
+        get_redemption_fee(ae_drawn)
+
+    entrypoint get_actual_debt_from_composite(debt_val: int): int =
+        get_net_debt(debt_val)
+
+    stateful entrypoint call_internal_remove_trove_owner(trove_owner: address) =
+        remove_trove_owner(trove_owner, List.length(state.trove_owners))

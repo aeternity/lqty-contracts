@@ -50,6 +50,7 @@ contract SortedTroves =
             , nodes = {}
             }
           }
+
     stateful entrypoint set_params(size: int, trove_manager: ITroveManager, borrower_operations: IBorrowerOperations) =
         only_owner()
 
