@@ -1,0 +1,6 @@
+// This interface is used solely for the purpose of debug.
+//Don't use such a contract for any other purpose than simulating the time
+contract interface ITimestampOffsetForDebug =
+    // add
+    entrypoint increase_timestamp_offset: (int) => unit
+    entrypoint get_timestamp_offset: () => int

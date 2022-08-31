@@ -21,7 +21,7 @@ contract CollSurplusPool =
         }
 
     entrypoint init()=
-        Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
+        /*Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )*/
         {  owner = Some(Call.caller)
          , addresses = None
          }

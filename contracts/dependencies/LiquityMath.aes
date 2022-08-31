@@ -14,6 +14,7 @@ namespace LiquityMath =
     function nicr_precision() = 100000000000000000000 //1e20
 
     function min(a: int, b: int) = if (a < b) a else b
+    function max(a: int, b: int) = if (a >= b) a else b
 
     /*
     * Multiply two decimal numbers and use normal rounding rules:

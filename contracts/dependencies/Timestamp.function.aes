@@ -1,0 +1,8 @@
+
+    function get_timestamp() =
+      let offset = switch(state.timestamp_offset_for_debug)
+        None => 0
+        Some(instance) => instance.get_timestamp_offset()
+      Chain.timestamp + offset
+
+

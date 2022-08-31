@@ -1,0 +1,30 @@
+@compiler >= 6
+include "../../contracts/dependencies/Utils.aes"
+/*import "../Interfaces/IPriceFeed.sol";*/
+
+/*
+* PriceFeed placeholder for testnet and development. The price is simply set manually and saved in a state
+* variable. The contract does not connect to a live Chainlink price feed.
+*/
+contract PriceFeedTestnet =
+    record state = { price: int}
+    entrypoint init() = { price = 200 * Utils.decimal_precision()}
+
+    /*// --- Functions ---*/
+
+    // View price getter for simplicity in tests
+    entrypoint get_price() = state.price
+
+    entrypoint fetch_price() =
+        // Fire an event just like the mainnet version would.
+        // This lets the subgraph rely on events to get the latest price even when developing locally.
+        Chain.event( LastGoodPriceUpdated(state.price))
+        state.price
+
+    /*// Manual external price setter.*/
+    stateful entrypoint set_price(price: int): bool =
+        put( state{ price = price })
+        true
+
+    // --- Events ---
+    datatype event = LastGoodPriceUpdated(int /*last_good_price*/)
