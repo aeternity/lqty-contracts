@@ -103,10 +103,13 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 04 */ () => deployContract( './contracts/TroveManager.aes',
                 [],
             ),
+            /* 05 */ () => deployContract( './contracts/StabilityPool.aes',
+                [],
+            ),
         ]
     try {
         //for ( const dep of deployments ) { await dep() }
-        await deployments[3]()
+        await deployments[5]()
     } catch ( ex ) {
         //empty
     }
