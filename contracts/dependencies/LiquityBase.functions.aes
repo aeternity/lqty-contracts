@@ -12,8 +12,8 @@
 
     // Amount of AEUSD to be locked in gas pool on opening troves
     //TODO: for the moment we set gas compensation to 0
-    /*entrypoint aeusd_gas_compensation() = 200000000000000000000 // 200e18*/
-    entrypoint aeusd_gas_compensation() = 0
+    /*entrypoint aeusd_gas_compensation'() = 200000000000000000000 // 200e18*/
+    entrypoint aeusd_gas_compensation'() = 0
 
     // Minimum amount of net AEUSD debt a trove must have
     entrypoint min_net_debt() = 1800000000000000000000 // 1800e18
@@ -31,13 +31,13 @@
 
     // Returns the composite debt (drawn debt + gas compensation) of a trove, for the purpose of ICR calculation
     entrypoint get_composite_debt(debt: int) =
-        SafeMath.add(debt,aeusd_gas_compensation())
+        SafeMath.add(debt,aeusd_gas_compensation'())
 
     function get_net_debt(debt: int) =
-        SafeMath.sub(debt,aeusd_gas_compensation())
+        SafeMath.sub(debt,aeusd_gas_compensation'())
 
     // Return the amount of ETH to be drawn from a trove's collateral and sent as gas compensation.
-    function get_coll_gas_compensation(entire_coll: int) =
+    function get_coll_gas_compensation'(entire_coll: int) =
         SafeMath.div(entire_coll,percent_divisor())
 
     entrypoint get_entire_system_coll(): int /*entireSystemColl*/ = with_addresses((addresses) =>

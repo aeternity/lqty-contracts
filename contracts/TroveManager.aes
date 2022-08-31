@@ -15,6 +15,7 @@ include "./dependencies/LiquityMath.aes"
 include "./dependencies/Utils.aes"
 include "./interfaces/IDefaultPool.aes"
 include "./interfaces/IPriceFeed.aes"
+include "./interfaces/ITimestampOffsetForDebug.aes"
 
 contract TroveManager =
 
@@ -86,6 +87,9 @@ contract TroveManager =
       // Error trackers for the trove redistribution calculation
       , last_ae_error_redistribution: int
       , last_aeusd_debt_error_redistribution: int
+      // simulate time offset in tests
+      //NOTE: don't use this for production deployment
+      , timestamp_offset_for_debug: option(ITimestampOffsetForDebug)
       }
 
     datatype status
@@ -275,7 +279,7 @@ contract TroveManager =
     //------------------------------------------------------------------------------
 
     entrypoint init() =
-      {  owner = None
+      {  owner = Some(Call.caller)
        , addresses = None
        , base_rate = 0
        , last_fee_operation_time = 0
@@ -289,6 +293,7 @@ contract TroveManager =
        , trove_owners = []
        , last_ae_error_redistribution = 0
        , last_aeusd_debt_error_redistribution = 0
+       , timestamp_offset_for_debug = None
        }
 
     stateful entrypoint set_addresses(addresses: addresses) =
@@ -772,8 +777,8 @@ contract TroveManager =
           let single_liquidation = init_liquidation_values() {
               entire_trove_debt = entire_trove_debt
             , entire_trove_coll = entire_trove_coll
-            , coll_gas_compensation = get_coll_gas_compensation(entire_trove_coll)
-            , aeusd_gas_compensation = aeusd_gas_compensation()
+            , coll_gas_compensation = get_coll_gas_compensation'(entire_trove_coll)
+            , aeusd_gas_compensation = aeusd_gas_compensation'()
             }
           let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
           // If ICR <= 100%, purely redistribute the Trove across all active Troves
@@ -851,8 +856,8 @@ contract TroveManager =
         let single_liquidation = init_liquidation_values(){
             entire_trove_debt = entire_trove_debt
           , entire_trove_coll = entire_trove_coll
-          , coll_gas_compensation = get_coll_gas_compensation(entire_trove_coll)
-          , aeusd_gas_compensation = aeusd_gas_compensation()
+          , coll_gas_compensation = get_coll_gas_compensation'(entire_trove_coll)
+          , aeusd_gas_compensation = aeusd_gas_compensation'()
           }
         let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
 
@@ -1092,11 +1097,11 @@ contract TroveManager =
       , price: int
       ): liquidation_values =
       let capped_coll_portion = SafeMath.div(entire_trove_debt*mcr(),price)
-      let coll_gas_compensation = get_coll_gas_compensation(capped_coll_portion)
+      let coll_gas_compensation = get_coll_gas_compensation'(capped_coll_portion)
       {  entire_trove_debt      = entire_trove_debt
        , entire_trove_coll      = entire_trove_coll
        , coll_gas_compensation  = coll_gas_compensation
-       , aeusd_gas_compensation = aeusd_gas_compensation()
+       , aeusd_gas_compensation = aeusd_gas_compensation'()
        , debt_to_offset         = entire_trove_debt
        , coll_to_send_to_sp     = SafeMath.sub(capped_coll_portion,coll_gas_compensation)
        , coll_surplus           = SafeMath.sub(entire_trove_coll,capped_coll_portion)
@@ -1318,11 +1323,11 @@ contract TroveManager =
 
     // Update the last fee operation time only if time passed >= decay interval. This prevents base rate griefing.
     stateful function update_last_fee_op_time() =
-        let time_passed = SafeMath.sub(Chain.timestamp,state.last_fee_operation_time)
+        let time_passed = SafeMath.sub(get_timestamp(),state.last_fee_operation_time)
 
         if (time_passed >= seconds_in_one_minute())
-            put(state{ last_fee_operation_time = Chain.timestamp })
-            Chain.event(LastFeeOpTimeUpdated(Chain.timestamp))
+            put(state{ last_fee_operation_time = get_timestamp() })
+            Chain.event(LastFeeOpTimeUpdated(get_timestamp()))
 
     function get_redemption_fee(ae_drawn: int): int =
         calc_redemption_fee(get_redemption_rate(), ae_drawn)
@@ -1504,7 +1509,7 @@ contract TroveManager =
     function require_after_bootstrap_period() = with_addresses((addresses) =>
         let system_deployment_time = addresses.lqty_token.get_deployment_start_time()
         require(
-          Chain.timestamp >= system_deployment_time + bootstrap_period(),
+          get_timestamp() >= system_deployment_time + bootstrap_period(),
           "TroveManager: Redemptions are not allowed during bootstrap phase" )
       )
 
@@ -1561,7 +1566,7 @@ contract TroveManager =
       , partial_redemption_hint_nicr: int
       ): single_redemption_values =
       let trove = state.troves[borrower]
-      let aeusd_lot = LiquityMath.min( max_aeusd_amount, SafeMath.sub(trove.debt,aeusd_gas_compensation()))
+      let aeusd_lot = LiquityMath.min( max_aeusd_amount, SafeMath.sub(trove.debt,aeusd_gas_compensation'()))
       let single_redemption = init_single_redemption_values(){
           // Determine the remaining amount (lot) to be redeemed, capped by the entire debt of the Trove minus the liquidation reserve
           aeusd_lot = aeusd_lot
@@ -1572,7 +1577,7 @@ contract TroveManager =
       let new_debt = SafeMath.sub(trove.debt,single_redemption.aeusd_lot)
       let new_coll = SafeMath.sub(trove.coll,single_redemption.ae_lot)
 
-      if (new_debt == aeusd_gas_compensation())
+      if (new_debt == aeusd_gas_compensation'())
           // No debt left in the Trove (except for the liquidation reserve), therefore the trove gets closed
           remove_stake'(borrower)
           close_trove'(borrower, ClosedByRedemption)
@@ -1665,14 +1670,14 @@ contract TroveManager =
         addresses.active_pool.send_ae(addresses.coll_surplus_pool.address, ae)
 
     function calc_decayed_base_rate'(): int =
-        let minutes_passed = minutes_passed_since_last_fee_op()
+        let minutes_passed = minutes_passed_since_last_fee_op'()
         let decay_factor = LiquityMath.dec_pow(minute_decay_factor(), minutes_passed)
 
         SafeMath.div(state.base_rate * decay_factor,Utils.decimal_precision())
 
-    function minutes_passed_since_last_fee_op(): int =
+    function minutes_passed_since_last_fee_op'(): int =
         SafeMath.div(
-          SafeMath.sub(Chain.timestamp,state.last_fee_operation_time),
+          SafeMath.sub(get_timestamp(),state.last_fee_operation_time),
           seconds_in_one_minute() )
 
     // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
@@ -1803,4 +1808,9 @@ contract TroveManager =
     //------------------------------------------------------------------------------
 //#inject "./dependencies/Ownable.functions.aes"
 //#inject "./dependencies/LiquityBase.functions.aes"
+//#inject "./dependencies/Timestamp.function.aes"
+
+//This should be available just for debug/tests
+//#inject-debug "../test/contracts/TroveManager.tester.aes"
+//#inject-debug "../test/contracts/TimestampOffsetSetter.tester.aes"
 

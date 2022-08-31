@@ -1,0 +1,2 @@
+    stateful entrypoint set_timestamp_offset_for_debug(timestamp_offset_for_debug: ITimestampOffsetForDebug) =
+      put(state{ timestamp_offset_for_debug = Some(timestamp_offset_for_debug)})
