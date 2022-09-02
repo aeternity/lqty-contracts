@@ -11,8 +11,8 @@ module.exports = {
             "middlewareUrl" : "https://mainnet.aeternity.io/mdw"
         },
         "local": {
-            "nodeUrl"       : process.env.LOCAL_NODE_URL || "http://localhost:3002",
-            "compilerUrl"   : process.env.LOCAL_COMPILE_URL || "http://localhost:3081",
+            "nodeUrl"       : process.env.LOCAL_NODE_URL || "http://localhost:3001",
+            "compilerUrl"   : process.env.LOCAL_COMPILE_URL || "http://localhost:3080",
             "middlewareUrl" : null
         }
     }

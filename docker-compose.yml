@@ -1,8 +1,8 @@
 version: '3'
 services:
   node:
-    #image: 'aeternity/aeternity:master-bundle'
-    image: 'thepiwo/aeternity:m1-devmode'
+    image: 'aeternity/aeternity:master-bundle'
+    #image: 'thepiwo/aeternity:m1-devmode'
     hostname: node
     environment:
       AETERNITY_CONFIG: /home/aeternity/aeternity.yaml
