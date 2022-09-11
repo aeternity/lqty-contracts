@@ -29,11 +29,11 @@ contract CommunityIssuance =
     // CONSTANTS
     //------------------------------------------------------------------------------
 
-    function seconds_in_one_minute() = 60
+    function milliseconds_in_one_minute() = 60000 // Chain.timestamp is in milliseconds
 
     function issuance_factor() = 999998681227695000
 
-    function lqty_supply_cap() = 32 * 10 ^ 24  // TODO: is not 32 millons as documented in Solidity code ?
+    function lqty_supply_cap() = 32000000000000000000000000 // 32 * 10 ^ 24
 
     entrypoint init() =
         Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
@@ -73,7 +73,7 @@ contract CommunityIssuance =
     t:  time passed since last LQTY issuance event  */
     function get_cumulative_issuance_fraction(): int =
       // Get the time passed since deployment	
-      let time_passed_in_minutes = SafeMath.div(SafeMath.sub(Chain.timestamp, state.deployed_time), seconds_in_one_minute())
+      let time_passed_in_minutes = SafeMath.div(SafeMath.sub(Chain.timestamp, state.deployed_time), milliseconds_in_one_minute())
 
       // f^t			 
       let power = LiquityMath.dec_pow(issuance_factor(), time_passed_in_minutes)
@@ -96,13 +96,13 @@ contract CommunityIssuance =
 
     function require_lqty_balance_ge_lqty_supply_cap() = with_addresses((addresses) =>
         require(
-            addresses.lqty_token.balance_of(Call.caller) >= lqty_supply_cap()
-          , "When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
+            Option.match(false, (balance) => balance  >= lqty_supply_cap(), addresses.lqty_token.balance(Call.caller))
+          , "CommunityIssuance: When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
 	  )
       )
 
     function require_caller_is_stability_pool() = with_addresses( (addresses) =>
-        require(Call.caller == addresses.stability_pool.address, "BorrowerOps: Caller is not Stability Pool")
+        require(Call.caller == addresses.stability_pool.address, "CommunityIssuance: Caller is not Stability Pool")
       )
 
     function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)

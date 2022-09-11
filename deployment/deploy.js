@@ -34,7 +34,11 @@ const deploy = async ( secretKey, network, compiler ) => {
         true //WARNING: this should be set to false when deploy to PRODUCTION
     )
 
-    const fakeAddress = 'ct_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'
+    const fakeAddressCt = 'ct_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'
+    const fakeAddress   = 'ak_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'    
+    const deployContract = async ( file, params, interfaceName ) =>
+        deployContract_( { file }, params, interfaceName )
+
     const deployments =
         [
             /* 00 */ () => deployContract( './contracts/BuildAll.aes',
@@ -54,39 +58,41 @@ const deploy = async ( secretKey, network, compiler ) => {
 	    ),
             /* 05 */ () => deployContract( './contracts/lqty/CommunityIssuance.aes',
                 [],
-					 ),
+            ),
             /* 06 */ () => deployContract( './contracts/lqty/LQTYToken.aes',
-                [],
+                [fakeAddressCt, fakeAddressCt, fakeAddressCt, fakeAddress, fakeAddress, fakeAddress],
 	    ),
             /* 07 */ () => deployContract( './contracts/lqty/LQTYStaking.aes',
                 [],
             ),
             /* 08 */ () => deployContract( './contracts/lqty/LockupContractFactory.aes',
                 [],
-					 ),
+	    ),
             /* 09 */ () => deployContract( './contracts/lqty/LockupContract.aes',
+  	        [0, fakeAddressCt, fakeAddress],
+            )
+            /* 10 */ () => deployContract( './test/contracts/PriceFeedTestnet.aes',
                 [],
             ),
-            /* 05 */ () => deployContract( './test/contracts/PriceFeedTestnet.aes',
+            /* 11 */ () => deployContract( './test/contracts/LiquityMathTester.aes',
                 [],
             ),
-            /* 06 */ () => deployContract( './test/contracts/LiquityMathTester.aes',
+            /* 12 */ () => deployContract( './test/contracts/TimeOffsetForDebug.aes',
                 [],
             ),
-            /* 07 */ () => deployContract( './test/contracts/TimeOffsetForDebug.aes',
+            /* 13 */ () => deployContract( './contracts/CollSurplusPool.aes',
                 [],
             ),
-            /* 08 */ () => deployContract( './contracts/CollSurplusPool.aes',
-                [],
-            ),
-            /* 09 */ () => deployContract( './contracts/AEUSDToken.aes',
+            /* 14 */ () => deployContract( './contracts/AEUSDToken.aes',
                 [ fakeAddress, fakeAddress, fakeAddress ],
             ),
-            /* 10 */ () => deployContract( './contracts/DefaultPool.aes',
+            /* 15 */ () => deployContract( './contracts/DefaultPool.aes',
                 [],
             ),
+            /* 16 */ () => deployContract( './contracts/AEUSDToken.aes',
+                [ fakeAddress, fakeAddress, fakeAddress ],
+            )
         ]
-
     //for ( const dep of deployments ) { await dep() }
     await deployments[8]()
 }

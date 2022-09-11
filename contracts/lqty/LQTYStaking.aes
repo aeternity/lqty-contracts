@@ -15,7 +15,7 @@ contract LQTYStaking =
 
     record addresses = {
 	  lqty_token: ILQTYToken
-	, lusd_token: IAEUSDToken
+	, aeusd_token: IAEUSDToken
     	, trove_manager: ITroveManager
 	, borrower_operations: IBorrowerOperations
 	, active_pool: IActivePool
@@ -23,7 +23,7 @@ contract LQTYStaking =
 
     record snapshot = {
           f_ae_snapshot : int
-	, f_lusd_snapshot : int
+	, f_aeusd_snapshot : int
 	}
 
     record state = {
@@ -33,7 +33,7 @@ contract LQTYStaking =
 	, snapshots: map(address, snapshot) 	
 	, total_lqty_staked: int
 	, f_ae: int
-	, f_lusd: int
+	, f_aeusd: int
         }
 
 
@@ -44,7 +44,7 @@ contract LQTYStaking =
 	 , snapshots = {}
 	 , total_lqty_staked = 0
 	 , f_ae = 0
-	 , f_lusd = 0
+	 , f_aeusd = 0
          }
 
     stateful entrypoint set_addresses(addresses: addresses) =
@@ -54,23 +54,23 @@ contract LQTYStaking =
       put(state{addresses = Some(addresses)})
 
       Chain.event(LQTYTokenAddressSet(addresses.lqty_token))
-      Chain.event(LQTYAEUSDTokenAddressSet(addresses.lusd_token))
+      Chain.event(LQTYAEUSDTokenAddressSet(addresses.aeusd_token))
       Chain.event(ITroveManagerAddressSet(addresses.trove_manager))
       Chain.event(BorrowerOperationsAddressSet(addresses.borrower_operations))
       Chain.event(ActivePoolAddressSet(addresses.active_pool))		      
 
       renounce_ownership()
 
-    // If caller has a pre-existing stake, send any accumulated ETH and LUSD gains to them. 
+    // If caller has a pre-existing stake, send any accumulated AE and AEUSD gains to them. 
     stateful entrypoint stake(lqty_amount: int) : unit = with_addresses((addresses) =>
         require_non_zero_amount(lqty_amount)
 
       	let current_stake = Map.lookup_default(Call.caller, state.stakes, 0)
 
-      	// Grab any accumulated ETH and LUSD gains from the current stake
-      	let (ae_gain, lusd_gain) =
+      	// Grab any accumulated AE and AEUSD gains from the current stake
+      	let (ae_gain, aeusd_gain) =
       	  if (current_stake != 0)
-      	     ( get_pending_ae_gain(Call.caller), get_pending_lusd_gain(Call.caller))
+      	     ( get_pending_ae_gain(Call.caller), get_pending_aeusd_gain(Call.caller))
 	  else
 	     (0,0)
 
@@ -89,14 +89,14 @@ contract LQTYStaking =
 	addresses.lqty_token.send_to_lqty_staking(Call.caller, lqty_amount)
 
 	Chain.event(StakeChanged(Call.caller, new_stake))
-	Chain.event(StakingGainWithdrawn(Call.caller, lusd_gain, ae_gain))
+	Chain.event(StakingGainWithdrawn(Call.caller, aeusd_gain, ae_gain))
 
 	if (current_stake != 0)
-	  addresses.lusd_token.transfer(Call.caller, lusd_gain)
+	  addresses.aeusd_token.transfer(Call.caller, aeusd_gain)
 	  send_ae_gain_to_user(ae_gain)
       )
 
-    // Unstake the LQTY and send the it back to the caller, along with their accumulated LUSD & ETH gains. 
+    // Unstake the LQTY and send the it back to the caller, along with their accumulated AEUSD & AE gains. 
     // If requested amount > stake, send their entire stake.
     stateful entrypoint unstake(lqty_amount: int) : unit = with_addresses((addresses) =>
         require_gt_zero_amount(lqty_amount)
@@ -104,9 +104,9 @@ contract LQTYStaking =
       	let current_stake = Map.lookup_default(Call.caller, state.stakes, 0)
 	require_user_has_stack(current_stake)
 
-        // Grab any accumulated ETH and LUSD gains from the current stake	
+        // Grab any accumulated AE and AEUSD gains from the current stake	
       	let ae_gain = get_pending_ae_gain(Call.caller)
-	let lusd_gain = get_pending_lusd_gain(Call.caller)
+	let aeusd_gain = get_pending_aeusd_gain(Call.caller)
 
       	update_user_snapshots(Call.caller)
 
@@ -128,10 +128,10 @@ contract LQTYStaking =
 
 	  Chain.event(StakeChanged(Call.caller, new_stake))
 	   
-	Chain.event(StakingGainWithdrawn(Call.caller, lusd_gain, ae_gain))
+	Chain.event(StakingGainWithdrawn(Call.caller, aeusd_gain, ae_gain))
 
-        // Send accumulated LUSD and ETH gains to the caller
-	addresses.lusd_token.transfer(Call.caller, lusd_gain)
+        // Send accumulated AEUSD and AE gains to the caller
+	addresses.aeusd_token.transfer(Call.caller, aeusd_gain)
 	send_ae_gain_to_user(ae_gain)
       )
 
@@ -148,31 +148,31 @@ contract LQTYStaking =
       put( state { f_ae @ f = SafeMath.add(f, ae_fee_per_lqty_staked) })
       Chain.event(F_AEUpdated(state.f_ae))
 
-    stateful entrypoint increaseF_lusd(lusd_fee: int) =
+    stateful entrypoint increaseF_aeusd(aeusd_fee: int) =
       require_caller_is_borrower_operations()
 
-      let lusd_fee_per_lqty_staked =
+      let aeusd_fee_per_lqty_staked =
         if (state.total_lqty_staked > 0)
-	  SafeMath.div(lusd_fee * Utils.decimal_precision(), state.total_lqty_staked)
+	  SafeMath.div(aeusd_fee * Utils.decimal_precision(), state.total_lqty_staked)
 	else
 	  0
 
-      put( state { f_lusd @ f = SafeMath.add(f, lusd_fee_per_lqty_staked) })
-      Chain.event(F_LUSDUpdated(state.f_lusd))
+      put( state { f_aeusd @ f = SafeMath.add(f, aeusd_fee_per_lqty_staked) })
+      Chain.event(F_AEUSDUpdated(state.f_aeusd))
 
     // --- Pending reward functions ---
 
     entrypoint get_pending_ae_gain(user: address) : int =
        state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_ae, state.snapshots[user].f_ae_snapshot), Utils.decimal_precision())
 
-    entrypoint get_pending_lusd_gain(user: address) : int =
-       state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_lusd, state.snapshots[user].f_lusd_snapshot), Utils.decimal_precision())    
+    entrypoint get_pending_aeusd_gain(user: address) : int =
+       state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_aeusd, state.snapshots[user].f_aeusd_snapshot), Utils.decimal_precision())    
 
     // --- Internal helper operations ---
 
     stateful function update_user_snapshots(user: address) =
-      put( state { snapshots[user] = { f_ae_snapshot = state.f_ae, f_lusd_snapshot = state.f_lusd} })
-      Chain.event(StakerSnapshotsUpdated(user, state.f_ae, state.f_lusd))
+      put( state { snapshots[user] = { f_ae_snapshot = state.f_ae, f_aeusd_snapshot = state.f_aeusd} })
+      Chain.event(StakerSnapshotsUpdated(user, state.f_ae, state.f_aeusd))
 
     stateful function send_ae_gain_to_user(ae_gain: int) =
       Chain.spend(Call.caller, ae_gain) // changed order to not to send event if spend fails    
@@ -220,14 +220,14 @@ contract LQTYStaking =
       | LQTYAEUSDTokenAddressSet(IAEUSDToken /*aeusdToken*/)
       // Combine two previous events in one changing parameter type to address ?
       | F_AEUpdated(int /*f_ae*/)      
-      | F_LUSDUpdated(int /*f_lusd*/)
-      | StakerSnapshotsUpdated(address /*staker*/, int /*f_ae*/, int /*f_lusd*/)
+      | F_AEUSDUpdated(int /*f_aeusd*/)
+      | StakerSnapshotsUpdated(address /*staker*/, int /*f_ae*/, int /*f_aeusd*/)
       | AESent(address /*accoutn*/, int /*amount*/)      
       | ActivePoolAddressSet(IActivePool /*activePool*/)
       | TotalLQTYStakedUpdated(int /*amount*/)
       | ITroveManagerAddressSet(ITroveManager /*troveManager*/)
       | StakeChanged(address /*staker*/, int /*newStake*/)
-      | StakingGainWithdrawn(address /*staker*/, int /*lusdGain*/, int /*aeGain*/)
+      | StakingGainWithdrawn(address /*staker*/, int /*aeusdGain*/, int /*aeGain*/)
       | BorrowerOperationsAddressSet(IBorrowerOperations /*borrowerOperations*/)      
 //#inject "../dependencies/Ownable.events.aes"
 
