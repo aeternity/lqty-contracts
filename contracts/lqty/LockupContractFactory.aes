@@ -47,12 +47,11 @@ main contract LockupContractFactory =
       renounce_ownership()
 
     stateful entrypoint deploy_lockup_contract(beneficiary: address, unlock_time: int) : unit = with_lqty_token((lqty_token) =>
-        let lockup_contract = Chain.create() : LockupContract
-	lockup_contract.set_addresses({lqty_token = lqty_token, beneficiary = beneficiary}, unlock_time)
+        let lockup_contract = Chain.create(unlock_time, lqty_token, beneficiary) : LockupContract
 
 	put(state{lockup_contract_to_deployer[lockup_contract.address] = Call.caller})
 
-	Chain.event(LockupContractDeployedThroughFactory(lockup_contract.address, beneficiary, Utils.addIntToPayload(Address.to_str(Call.caller),unlock_time))) // 
+	Chain.event(LockupContractDeployedThroughFactory(lockup_contract.address, beneficiary, Utils.addIntToPayload(Address.to_str(Call.caller),unlock_time)))
       )
 
     entrypoint is_registered_lockup(contract': address) : bool =

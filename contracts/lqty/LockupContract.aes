@@ -20,64 +20,46 @@ include "../dependencies/Utils.aes"
 
 contract LockupContract =
 
-    record addresses = {
+    record state = {
 	  lqty_token: ILQTYToken
 	, beneficiary: address
+        , unlock_time: int
         }
 
-    record state = {
-          unlock_time: int
-	, addresses: option(addresses)
-        }
-
-    entrypoint init() =
+    entrypoint init(unlock_time: int, lqty_token: ILQTYToken, beneficiary: address) =
+    	let system_deployment_time = lqty_token.get_deployment_start_time()
+        require_unlock_time_is_at_least_one_year_after_system_deployment(system_deployment_time, unlock_time)
+        Chain.event(LockupContractCreated(beneficiary, unlock_time))	
         {  
-	   addresses = None
-	 , unlock_time = 0
+	   lqty_token = lqty_token
+	 , beneficiary = beneficiary
+        /*
+        * Set the unlock time to a chosen instant in the future, as long as it is at least 1 year after
+        * the system was deployed 
+        */
+	 , unlock_time = unlock_time
          }
 
     // constants
-    function seconds_in_one_year() : int = 31536000
+    function miliseconds_in_one_year() : int = 31536000000
 
-    stateful entrypoint set_addresses(addresses: addresses, unlock_time: int) =
-      put(state{addresses = Some(addresses)})
+    stateful entrypoint withdraw_lqty() : unit = 
+      require_caller_is_beneficiary()
+      require_lockup_duration_passed()
 
-      /*
-      * Set the unlock time to a chosen instant in the future, as long as it is at least 1 year after
-      * the system was deployed 
-      */
-      require_unlock_time_is_at_least_one_year_after_system_deployment(unlock_time)
-      put(state { unlock_time = unlock_time })
-
-      Chain.event(LockupContractCreated(addresses.beneficiary, unlock_time))
-
-    stateful entrypoint withdraw_lqty() = with_addresses((addresses) =>
-        require_caller_is_beneficiary()
-        require_lockup_duration_passed()
-
-        let lqty_balance = addresses.lqty_token.balance_of(Contract.address)
-	addresses.lqty_token.transfer(addresses.beneficiary, lqty_balance)
-	Chain.event(LockupContractEmptied(lqty_balance))
-      )
+      let lqty_balance = Option.default(0,state.lqty_token.balance(Contract.address))
+      state.lqty_token.transfer(state.beneficiary, lqty_balance)
+      Chain.event(LockupContractEmptied(lqty_balance))
 
     // --- 'require' functions --- 
-    function require_caller_is_beneficiary() : unit = with_addresses((addresses) =>
-        require(addresses.beneficiary == Call.caller , "LockupContract: caller is not the beneficiary")
-      )
+    stateful function require_caller_is_beneficiary() : unit = 
+      require(state.beneficiary == Call.caller , "LockupContract: caller is not the beneficiary")
 
     function require_lockup_duration_passed() : unit = 
       require(Chain.timestamp >= state.unlock_time , "LockupContract: The lockup duration must have passed")
 
-    function require_unlock_time_is_at_least_one_year_after_system_deployment(unlock_time: int) : unit = with_addresses((addresses) =>
-        let system_deployment_time = addresses.lqty_token.get_deployment_start_time()
-        require(unlock_time >= SafeMath.add(system_deployment_time, seconds_in_one_year()) , "LockupContract: unlock time must be at least one year after system deployment")
-      )
-
-    // helper functions
-
-    function with_addresses(f: (addresses) => 'a ): 'a = switch(state.addresses)
-      None => abort("LQTYToken: no addresses")
-      Some(addresses) => f(addresses)
+    function require_unlock_time_is_at_least_one_year_after_system_deployment(system_deployment_time: int, unlock_time: int) : unit = 
+      require(unlock_time >= SafeMath.add(system_deployment_time, miliseconds_in_one_year()) , "LockupContract: unlock time must be at least one year after system deployment")
 
     // --- Events ---
     datatype event
