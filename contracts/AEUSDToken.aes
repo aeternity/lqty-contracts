@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: MIT
+
+include "./Interfaces/IAEUSDToken.aes"
+include "./Dependencies/SafeMath.aes"
+
+include "./interfaces/ITroveManager.aes"
+include "./interfaces/IStabilityPool.aes"
+include "./interfaces/IBorrowerOperations.aes"
+
+/*
+*
+* Based upon AEX9 contract:
+* https://github.com/mradkov/aeternity-fungible-token/blob/master/contracts/fungible-token-full.aes
+*
+* --- Functionality added specific to the AEUSDToken ---
+*
+* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Liquity contracts) in external
+* transfer() and transfer_allowance() calls. The purpose is to protect users from losing tokens by mistakenly sending
+* AEUSD directly to a Liquity
+* core contract, when they should rather call the right function.
+*
+* 2) send_toPool() and return_from_pool(): functions callable only Liquity core contracts,
+* which move AEUSD tokens between Liquity <-> user.
+*/
+
+contract AEUSDToken =
+
+    //------------------------------------------------------------------------------
+    // DATA & STATE
+    //------------------------------------------------------------------------------
+
+    record state =
+        { total_supply : int
+        , balances     : balances
+        , allowances   : allowances
+        , trove_manager: ITroveManager
+        , stability_pool: IStabilityPool
+        , borrower_operations: IBorrowerOperations
+        }
+
+    // This is the format of allowance record type that will be used in the state
+    record allowance_accounts = { from_account : address, for_account : address }
+
+    // This is a type alias for the balances map
+    type balances = map(address, int)
+
+    // This is a type alias for the allowances map
+    type allowances = map(allowance_accounts, int)
+
+    // This is the meta-information record type
+    record meta_info =
+        { name     : string
+        , symbol   : string
+        , decimals : int }
+
+
+    //------------------------------------------------------------------------------
+    // ENTRYPOINTS
+    //------------------------------------------------------------------------------
+
+    entrypoint aex9_extensions() : list(string) = ["allowances", "mintable", "burnable"]
+
+    // init
+    entrypoint init
+        ( trove_manager: ITroveManager
+        , stability_pool: IStabilityPool
+        , borrower_operations: IBorrowerOperations
+        ) =
+        Chain.event(TroveManagerAddressChanged(trove_manager))
+        Chain.event(StabilityPoolAddressChanged(stability_pool))
+        Chain.event(BorrowerOperationsAddressChanged(borrower_operations))
+        {  total_supply = 0
+         , balances = {}
+         , allowances = {}
+         , trove_manager = trove_manager
+         , stability_pool = stability_pool
+         , borrower_operations = borrower_operations
+         }
+
+    // Get the token meta info
+    entrypoint meta_info() : meta_info = {
+          name = "AEUSD Stablecoin"
+        , symbol = "AEUSD"
+        , decimals = 18
+        }
+
+    // Creates `value` tokens and assigns them to `account`, increasing the total supply.
+    // Emits a `Mint` event with `account` and `value`.
+    stateful entrypoint mint(account: address, value: int) =
+        require_caller_is_borrower_operations()
+        require_non_negative_value(value)
+        put(state
+          { total_supply = state.total_supply + value
+          , balances[account = 0] @ b = b + value
+          })
+        Chain.event(Mint(account, value))
+
+    stateful entrypoint send_to_pool(sender: address,  pool_address: address, value: int) =
+        require_caller_is_stability_pool()
+        internal_transfer(sender, pool_address, value)
+
+    stateful entrypoint return_from_pool(pool_address: address, receiver: address, value: int) =
+        require_caller_is_trove_mor_sp()
+        internal_transfer(pool_address, receiver, value)
+
+    // Destroys `value` tokens from `Call.caller`, reducing the total supply.
+    // `Burn` event with `Call.caller` address and `value`.
+    stateful entrypoint burn(value: int) =
+        require_caller_is_bo_or_trovem_or_sp()
+        require_balance(Call.caller, value)
+        require_non_negative_value(value)
+        put(state{ total_supply = state.total_supply - value, balances[Call.caller] @ b = b - value })
+        Chain.event(Burn(Call.caller, value))
+
+    /// Transfer the balance of `value` from `Call.caller` to `to_account` account
+    stateful entrypoint transfer(to_account: address, value: int) =
+        require_valid_recipient(to_account)
+        internal_transfer(Call.caller, to_account, value)
+
+    // Get the allowance for passed `allowance_accounts` record
+    // returns option(int)
+    // This will lookup and return the allowed spendable amount
+    // from one address for another
+    // If there is no such allowance present result is None
+    // Otherwise Some(int) is returned with the allowance amount
+    entrypoint allowance(allowance_accounts : allowance_accounts) : option(int) =
+        Map.lookup(allowance_accounts, state.allowances)
+
+    // Get the allowance for caller from `from_account` address
+    // returns option(int)
+    // This will look up the allowances and return the allowed spendable amount
+    // from `from_account` for the transaction sender `Call.caller`
+    // If there is no such allowance present result is None
+    // Otherwise Some(int) is returned with the allowance amount
+    entrypoint allowance_for_caller(from_account: address) : option(int) =
+        allowance({ from_account = from_account, for_account = Call.caller })
+    // Create allowance for `for_account` to withdraw from your account `Call.caller`,
+    // multiple times, up to the `value` amount.
+    // This function will abort and fail if called again when there is allowance
+    // already set for these particular accounts pair.
+    stateful entrypoint create_allowance(for_account: address, value: int) =
+        // Check if the passed value is not negative
+        require_non_negative_value(value)
+        // Set the allowance account pair in the memory variable
+        let allowance_accounts = { from_account =  Call.caller, for_account = for_account }
+        // Check if there is no allowance already present in the state
+        // for these particular accounts pair.
+        require_allowance_not_existent(allowance_accounts)
+        // Save the allowance value for these accounts pair in the state
+        put(state{ allowances[allowance_accounts] = value })
+        // Fire Allowance event to include it in the transaction event log
+        Chain.event(Allowance(Call.caller, for_account, value))
+
+    // Allows to change the allowed spendable value for `for_account` with `value_change`
+    stateful entrypoint change_allowance(for_account: address, value_change: int) =
+        let allowance_accounts = { from_account =  Call.caller, for_account = for_account }
+        internal_change_allowance(allowance_accounts, value_change)
+
+    // Resets the allowance given `for_account` to zero.
+    stateful entrypoint reset_allowance(for_account: address) =
+        let allowance_accounts = { from_account = Call.caller, for_account = for_account }
+        internal_change_allowance(allowance_accounts, - state.allowances[allowance_accounts])
+
+    // Send `value` amount of tokens from address `from_account` to address `to_account`
+    // The transfer_allowance method is used for a withdraw workflow, allowing contracts to send
+    // tokens on your behalf, for example to "deposit" to a contract address and/or to charge
+    // fees in sub-token contract.
+    // The execution will abort and fail if there is no allowance set up previous this call
+    stateful entrypoint transfer_allowance(from_account: address, to_account: address, value: int) =
+        require_valid_recipient(to_account)
+        let allowance_accounts = { from_account = from_account, for_account = Call.caller }
+        internal_transfer(from_account, to_account, value)
+        internal_change_allowance(allowance_accounts, -value)
+
+    //TODO: add permit entrypoints
+
+    //------------------------------------------------------------------------------
+    // CONSTRAINTS
+    //------------------------------------------------------------------------------
+
+    function require_valid_recipient(recipient: address) =
+        require(
+          recipient != Contract.address,
+          "AEUSD: Cannot transfer tokens directly to the AEUSD token contract or the zero address")
+        require(
+          recipient != state.stability_pool.address &&
+          recipient != state.trove_manager.address &&
+          recipient != state.borrower_operations.address,
+          "AEUSD: Cannot transfer tokens directly to the StabilityPool, TroveManager or BorrowerOps")
+
+    function require_caller_is_borrower_operations() =
+        require(Call.caller == state.borrower_operations.address,
+          "AEUSDToken: Caller is not BorrowerOperations")
+
+    function require_caller_is_bo_or_trovem_or_sp() =
+        require(
+            Call.caller == state.borrower_operations.address ||
+            Call.caller == state.trove_manager.address ||
+            Call.caller == state.stability_pool.address,
+            "AEUSD: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool")
+
+    function require_caller_is_stability_pool() =
+        require(Call.caller == state.stability_pool.address, "AEUSD: Caller is not the StabilityPool")
+
+    function require_caller_is_trove_mor_sp() =
+        require(
+            Call.caller == state.trove_manager.address || Call.caller == state.stability_pool.address,
+            "AEUSD: Caller is neither TroveManager nor StabilityPool")
+
+    //------------------------------------------------------------------------------
+    // EVENTS
+    //------------------------------------------------------------------------------
+
+    datatype event
+        = TroveManagerAddressChanged(ITroveManager /*troveManagerAddress*/)
+        | StabilityPoolAddressChanged(IStabilityPool /*newStabilityPoolAddress*/)
+        | BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)
+//#inject "./dependencies/AEX9.events.aes"
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+//#inject "./dependencies/AEX9.functions.aes"

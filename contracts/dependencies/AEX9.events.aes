@@ -1,0 +1,5 @@
+        | Transfer(address, address, int)
+        | Allowance(address, address, int)
+        | Burn(address, int)
+        | Mint(address, int)
+        | Swap(address, int)
