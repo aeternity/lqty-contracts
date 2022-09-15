@@ -34,6 +34,7 @@ const deploy = async ( secretKey, network, compiler ) => {
         true //WARNING: this should be set to false when deploy to PRODUCTION
     )
 
+    const fakeAddress = 'ct_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'
     const deployments =
         [
             /* 00 */ () => deployContract( './contracts/BuildAll.aes',
@@ -60,9 +61,12 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 07 */ () => deployContract( './test/contracts/TimeOffsetForDebug.aes',
                 [],
             ),
+            /* 08 */ () => deployContract( './contracts/AEUSDToken.aes',
+                [ fakeAddress, fakeAddress, fakeAddress ],
+            ),
         ]
     //for ( const dep of deployments ) { await dep() }
-    await deployments[4]()
+    await deployments[8]()
 }
 
 module.exports = {
