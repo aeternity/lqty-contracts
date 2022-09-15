@@ -61,8 +61,14 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 07 */ () => deployContract( './test/contracts/TimeOffsetForDebug.aes',
                 [],
             ),
-            /* 08 */ () => deployContract( './contracts/AEUSDToken.aes',
+            /* 08 */ () => deployContract( './contracts/CollSurplusPool.aes',
+                [],
+            ),
+            /* 09 */ () => deployContract( './contracts/AEUSDToken.aes',
                 [ fakeAddress, fakeAddress, fakeAddress ],
+            ),
+            /* 10 */ () => deployContract( './contracts/DefaultPool.aes',
+                [],
             ),
         ]
     //for ( const dep of deployments ) { await dep() }
