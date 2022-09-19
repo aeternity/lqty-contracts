@@ -36,6 +36,7 @@ const deploy = async ( secretKey, network, compiler ) => {
 
     const fakeAddressCt = 'ct_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'
     const fakeAddress   = 'ak_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'    
+
     const deployContract = async ( file, params, interfaceName ) =>
         deployContract_( { file }, params, interfaceName )
 
@@ -70,7 +71,7 @@ const deploy = async ( secretKey, network, compiler ) => {
 	    ),
             /* 09 */ () => deployContract( './contracts/lqty/LockupContract.aes',
   	        [0, fakeAddressCt, fakeAddress],
-            )
+            ),
             /* 10 */ () => deployContract( './test/contracts/PriceFeedTestnet.aes',
                 [],
             ),
@@ -94,7 +95,7 @@ const deploy = async ( secretKey, network, compiler ) => {
             )
         ]
     //for ( const dep of deployments ) { await dep() }
-    await deployments[8]()
+    await deployments[6]()
 }
 
 module.exports = {

@@ -53,16 +53,20 @@ contract LQTYToken =
     //------------------------------------------------------------------------------
     // DATA & STATE
     //------------------------------------------------------------------------------
-	
+
+    // This is the format of allowance record type that will be used in the state
+    record allowance_accounts = { from_account : address, for_account : address }
+
+    // This is a type alias for the balances map
+    type balances = map(address, int)
+
+    // This is a type alias for the allowances map
+    type allowances = map(allowance_accounts, int)
+
     record meta_info = {
           name : string
 	, symbol : string
 	, decimals : int
-	}
-
-    record allowance_accounts = {
-          from_account : address
-	, for_account : address
 	}
 
     record state = {
@@ -73,10 +77,10 @@ contract LQTYToken =
 	, bounty: address
 	, multisig: address	
 	// AX9 token data
-	, balances: map(address, int) 
+	, balances: balances
 	, total_supply: int
 	// Extension Allowance                                                                                                                                                                                                                              
-	, allowances: map(address, map(address, int))	
+	, allowances: allowances	
 	, deployment_start_time: int
 	, lp_rewards_entitlement: int
         }
@@ -127,16 +131,12 @@ contract LQTYToken =
 
     // --- External functions ---
     // AEX9 interface
-    entrypoint aex9_extensions(): list(string) = ["mintable", "allowance"]
+    entrypoint aex9_extensions(): list(string) = ["mintable", "allowances"]
 
     // --- AX9 meta information --
     entrypoint meta_info(): meta_info = {name = "LQTY", symbol = "LQTY", decimals = 18}
     
     entrypoint total_supply(): int = state.total_supply
-
-    entrypoint balance(account: address): option(int) = Map.lookup(account, state.balances)
-
-    entrypoint balances(): map(address, int) = state.balances
 
     entrypoint get_deployment_start_time(): int = state.deployment_start_time
 
@@ -152,18 +152,16 @@ contract LQTYToken =
       // Otherwise, standard transfer functionality
       transfer_allowance(Call.caller, recipient, amount)
 
-    // TODO: is this part of AEX9 Allowance extension 
-    entrypoint allowance(allowance_accounts: allowance_accounts) : option(int) =
-      Option.flat_map( (m) => Map.lookup(allowance_accounts.for_account, m)
-                     , Map.lookup(allowance_accounts.from_account, state.allowances)
-		     )
+    // TODO: is this part of AEX9 Allowance extension, maybe put it in common code ?
+    entrypoint allowance(allowance_accounts : allowance_accounts) : option(int) =
+        Map.lookup(allowance_accounts, state.allowances)
     
     // TODO: is called approve in solidity contract
     stateful entrypoint create_allowance(for_account: address, value: int) =
       if (is_first_year())
       	 require_caller_is_not_multisig()
 
-      allowance_internal(Call.caller, for_account, value)
+      internal_change_allowance({from_account = Call.caller, for_account = for_account}, value)
 
     // TODO: transfer_from in solidity contract
     stateful entrypoint transfer_allowance(sender: address,  recipient: address, amount: int) : unit =
@@ -172,8 +170,8 @@ contract LQTYToken =
 
       require_valid_recipient(recipient)
 
-      transfer_internal(sender, recipient, amount)
-      allowance_internal(sender, Call.caller, SafeMath.add(state.allowances[sender][Call.caller], amount))
+      internal_transfer(sender, recipient, amount)
+      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
     
     stateful entrypoint change_allowance(sender: address,  recipient: address, amount: int) : unit =
       if (is_first_year())
@@ -181,15 +179,15 @@ contract LQTYToken =
 
       require_valid_recipient(recipient)
 
-      transfer_internal(sender, recipient, amount)
-      allowance_internal(sender, Call.caller, SafeMath.add(state.allowances[sender][Call.caller], amount))
+      internal_transfer(sender, recipient, amount)
+      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
 
     // Resets the allowance given `for_account` to zero.
     stateful entrypoint reset_allowance(for_account: address) =
       if (is_first_year())
       	 require_caller_is_not_multisig()
 
-      allowance_internal(Call.caller, for_account, 0)
+      internal_change_allowance({from_account=Call.caller, for_account=for_account}, 0)
 
     stateful entrypoint send_to_lqty_staking(sender: address, amount: int) : unit = 
       require_caller_is_lqty_staking()
@@ -197,25 +195,7 @@ contract LQTYToken =
       if (is_first_year())
        require_sender_is_not_multisig(sender)
 	 
-      transfer_internal(sender, state.lqty_staking.address, amount)
-      
-    // --- Internal operations ---
-
-    stateful function transfer_internal(sender: address, recipient: address, amount: int) : unit =
-      require_non_negative_value(amount)
-      require_balance(sender, amount)
-
-      put( state { balances @ b = b { [sender] @ s = s - amount
-                                    , [recipient] @ r = r + amount
-				    }
-                 }
-	)
-      Chain.event(Transfer(sender, recipient, amount))
-
-    stateful function allowance_internal(owner: address,spender: address, amount: int) =
-      require_non_negative_value(amount)    
-      put( state { allowances[owner][spender] = amount })
-      Chain.event(Allowance(owner, spender, amount))
+      internal_transfer(sender, state.lqty_staking.address, amount)
 
     // helper functions
 
@@ -227,16 +207,6 @@ contract LQTYToken =
       Chain.timestamp - state.deployment_start_time < one_year_in_miliseconds() 
 
     // --- Requirements
-    
-    function require_non_negative_value(value : int) : unit  =
-      require(value >= 0, "NON_NEGATIVE_VALUE_REQUIRED")
-
-    function require_balance(account : address, value : int) : unit =
-      switch(balance(account))
-        Some(balance) =>
-      	  require(balance >= value, "ACCOUNT_INSUFFICIENT_BALANCE")
-	None => abort("BALANCE_ACCOUNT_NOT_EXISTENT")
-
     function require_valid_recipient(recipient: address) : unit = 
       require(recipient != Contract.address, "LQTY: Cannot transfer tokens directly to the LQTY token contract or the zero address")
 
@@ -262,9 +232,10 @@ contract LQTYToken =
       = CommunityIssuanceAddressSet(ICommunityIssuance /*communityIssuanceAddress*/)
       | LQTYStakingAddressSet(ILQTYStaking /*lqtyStaking*/)
       | LockupContractFactoryAddressSet(ILockupContractFactory /*lockupContractFactory*/)
-      // AEX9 Events
-      | Allowance(indexed address /*owner*/, indexed address /*spender*/, indexed int /*amount*/)
-      | Mint(indexed address /*account*/, indexed int /*amount*/)             
-      | Transfer(indexed address /*sender*/, indexed address /*receiver*/, indexed int /*amount*/)       
-      // TODO: Specification says sender is just an address not an option, option is only used when minting
+//#inject "../dependencies/AEX9.events.aes"      
+
+    //------------------------------------------------------------------------------
+    // EXTENTIONS
+    //------------------------------------------------------------------------------
+//#inject "../dependencies/AEX9.functions.aes"
 
