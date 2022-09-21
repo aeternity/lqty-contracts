@@ -37,8 +37,8 @@ const deploy = async ( secretKey, network, compiler ) => {
     const fakeAddressCt = 'ct_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'
     const fakeAddress   = 'ak_A8WVnCuJ7t1DjAJf4y8hJrAEVpt1T9ypG3nNBdbpKmpthGvUm'    
 
-    const deployContract = async ( file, params, interfaceName ) =>
-        deployContract_( { file }, params, interfaceName )
+    // const deployContract = async ( file, params, interfaceName ) =>
+    //     deployContract_( { file }, params, interfaceName )
 
     const deployments =
         [
