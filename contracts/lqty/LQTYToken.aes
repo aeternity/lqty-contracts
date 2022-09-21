@@ -70,8 +70,7 @@ contract LQTYToken =
 	}
 
     record state = {
-          owner: address
-    	, community_issuance: ICommunityIssuance
+    	  community_issuance: ICommunityIssuance
 	, lqty_staking: ILQTYStaking
 	, lockup_contract_factory: ILockupContractFactory
 	, bounty: address
@@ -115,8 +114,8 @@ contract LQTYToken =
                                                                                                                    
       Chain.event(Mint(multisig, multisig_entitlement))
 	
-      {  owner = Call.caller
-       , community_issuance = community_issuance
+      {  
+         community_issuance = community_issuance
        , lqty_staking = lqty_staking
        , lockup_contract_factory = lockup_contract_factory
        , bounty = bounty
