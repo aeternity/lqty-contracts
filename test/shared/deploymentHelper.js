@@ -22,30 +22,31 @@ const withLoggingAddresses = ( ret ) => {
 const setupDeployment = async () => {
     const sdk = await utils.createSdkInstance()
     const deploy = deployContract( sdk )
+    const troveManager = await deploy( './contracts/TroveManager.aes' )
+    const stabilityPool = await deploy( './contracts/StabilityPool.aes' )
+    const borrowerOperations = await deploy( './contracts/BorrowerOperations.aes' )
+
+    const communityIssuance = await deploy('./contracts/lqty/CommunityIssuance.aes')
+    const lqtyStaking = await deploy( './contracts/lqty/LQTYStaking.aes' )
+    const lockupContractFactory = await deploy( './contracts/lqty/LockupContractFactory.aes' )
+    
     return {
         deployLiquityCore: async () => {
             return withLoggingAddresses( {
                 sdk,
                 priceFeedTestnet   : await deploy( './test/contracts/PriceFeedTestnet.aes' ),
                 sortedTroves       : await deploy( './contracts/SortedTroves.aes' ),
-                troveManager       : await deploy( './contracts/TroveManager.aes' ),
+                troveManager       : troveManager,
                 collSurplusPool    : await deploy( './contracts/CollSurplusPool.aes' ),
-                borrowerOperations : await deploy( './contracts/BorrowerOperations.aes' ),
-
-                //TODO: dummy contracts , have to be replaced with the right ones
-                activePool    : await deploy( './test/contracts/PlaceholderContract.aes' ),
+                borrowerOperations : borrowerOperations,
+                activePool    : await deploy( './contracts/ActivePool.aes' ),
                 defaultPool   : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                stabilityPool : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                gasPool       : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                aeusdToken    : await deploy( './test/contracts/PlaceholderContract.aes' ),
+                stabilityPool : stabilityPool,
+                gasPool       : await deploy( './contracts/GasPool.aes' ),
+                aeusdToken    : await deploy( './contracts/AEUSDToken.aes', [troveManager.address, stabilityPool.address, borrowerOperations.address] ),
 
                 //const functionCaller = await FunctionCaller.new()
                 //const hintHelpers = await HintHelpers.new()
-                //const aeusdToken = await LUSDToken.new(
-                //troveManager.address,
-                //stabilityPool.address,
-                //borrowerOperations.address
-                //)
             } )
         },
 
@@ -53,10 +54,10 @@ const setupDeployment = async () => {
             const sdk = await utils.createSdkInstance()
             const deploy = deployContract( sdk )
             return withLoggingAddresses( {
-                lqtyStaking           : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                lockupContractFactory : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                communityIssuance     : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                lqtyToken             : await deploy( './test/contracts/PlaceholderContract.aes' ),
+                lqtyStaking           : lqtyStaking,
+                lockupContractFactory : lockupContractFactory,
+                communityIssuance     : communityIssuance,
+                lqtyToken             : await deploy( './contracts/lqty/LQTYToken.aes', [communityIssuance.address, lqtyStaking.address, lockupContractFactory.address, bountyAddress, lpRewardsAddress, multisigAddress ] ), // await deploy( './test/contracts/PlaceholderContract.aes' )
             } )
         }
     }

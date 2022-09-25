@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-include "./Interfaces/IAEUSDToken.aes"
-include "./Dependencies/SafeMath.aes"
+include "./interfaces/IAEUSDToken.aes"
+include "./dependencies/SafeMath.aes"
 
 include "./interfaces/ITroveManager.aes"
 include "./interfaces/IStabilityPool.aes"
@@ -215,9 +215,9 @@ contract AEUSDToken =
         = TroveManagerAddressChanged(ITroveManager /*troveManagerAddress*/)
         | StabilityPoolAddressChanged(IStabilityPool /*newStabilityPoolAddress*/)
         | BorrowerOperationsAddressChanged(IBorrowerOperations /*newBorrowerOperationsAddress*/)
-//#inject "../dependencies/AEX9.events.aes"
+//#inject "./dependencies/AEX9.events.aes"
 
     //------------------------------------------------------------------------------
     // EXTENTIONS
     //------------------------------------------------------------------------------
-//#inject "../dependencies/AEX9.functions.aes"
+//#inject "./dependencies/AEX9.functions.aes"
