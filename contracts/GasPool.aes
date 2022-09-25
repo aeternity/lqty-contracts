@@ -12,7 +12,12 @@
  * 50 AEUSD debt on the trove is cancelled.
  * See this issue for more context: https://github.com/liquity/dev/issues/186
  */
-contract GasPool {
+contract GasPool =
     // do nothing, as the core contracts have permission to send to and burn from this address
-}
+    entrypoint owner() = "just a sample"
+	 
+    
+
+
+
 
