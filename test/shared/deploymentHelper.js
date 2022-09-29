@@ -51,8 +51,6 @@ const setupDeployment = async () => {
         },
 
         deployLQTYContracts: async ( bountyAddress, lpRewardsAddress, multisigAddress ) => {
-            const sdk = await utils.createSdkInstance()
-            const deploy = deployContract( sdk )
             return withLoggingAddresses( {
                 lqtyStaking           : lqtyStaking,
                 lockupContractFactory : lockupContractFactory,

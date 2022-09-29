@@ -56,38 +56,38 @@ contract interface IBorrowerOperations =
     payable stateful entrypoint open_trove: (
           int     //maxFee
         , int     //AEUSDAmount
-        , address //upperHint
-        , address //lowerHint
+        , option(address) //upperHint
+        , option(address) //lowerHint
         ) => open_trove
 
     stateful entrypoint add_coll: (
-          address //upperHint
-        , address //lowerHint
+          option(address) //upperHint
+        , option(address) //lowerHint
         ) => adjust_trove
 
     stateful entrypoint move_ae_gain_to_trove: (
           address //_user
-        , address //upperHint
-        , address //lowerHint
+        , option(address) //upperHint
+        , option(address) //lowerHint
         ) => adjust_trove
 
     stateful entrypoint withdraw_coll: (
           int     //amount
-        , address //upperHint
-        , address //lowerHint
+        , option(address) //upperHint
+        , option(address) //lowerHint
         ) => adjust_trove
 
     stateful entrypoint withdraw_aeusd: (
           int     //maxFee
         , int     //amount
-        , address //upperHint
-        , address //lowerHint
+        , option(address) //upperHint
+        , option(address) //lowerHint
         ) => adjust_trove
 
     stateful entrypoint repay_aeusd: (
           int     //_amount
-        , address //upperHint
-        , address //lowerHint
+        , option(address) //upperHint
+        , option(address) //lowerHint
         ) => adjust_trove
 
     stateful entrypoint adjust_trove: (
@@ -95,8 +95,8 @@ contract interface IBorrowerOperations =
         , int       //collWithdrawal
         , int       //debtChange
         , bool      //sDebtIncrease
-        , address   //upperHint
-        , address   //lowerHint
+        , option(address)   //upperHint
+        , option(address)   //lowerHint
         ) => adjust_trove
 
     stateful entrypoint close_trove: () => unit

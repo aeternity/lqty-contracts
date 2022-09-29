@@ -129,7 +129,7 @@ contract interface IStabilityPool =
      * - Leaves their compounded deposit in the Stability Pool
      * - Updates snapshots for deposit and tagged front end stake
      */
-    stateful entrypoint withdraw_ae_gain_to_trove: (address /*upperHint*/, address /*lowerHint*/) => unit
+    stateful entrypoint withdraw_ae_gain_to_trove: (option(address) /*upperHint*/, option(address) /*lowerHint*/) => unit
 
     /*
      * Initial checks:

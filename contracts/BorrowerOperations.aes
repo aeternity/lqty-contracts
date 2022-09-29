@@ -116,8 +116,8 @@ contract BorrowerOperations =
     payable stateful entrypoint open_trove(
           max_fee_percentage: int
         , aeusd_amount: int
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.open_trove = with_addresses( (addresses) =>
             /*let contracts_cache: contracts_cache = {*/
                       /*trove_manager = addresses.trove_manager*/
@@ -193,14 +193,14 @@ contract BorrowerOperations =
         )
 
     // Send AE as collateral to a trove
-    payable stateful entrypoint add_coll( upper_hint: address , lower_hint: address): IBorrowerOperations.adjust_trove =
+    payable stateful entrypoint add_coll( upper_hint: option(address) , lower_hint: option(address)): IBorrowerOperations.adjust_trove =
         adjust_trove'(Call.caller, 0, 0, false, upper_hint, lower_hint, 0)
 
     // Send AE as collateral to a trove. Called by only the Stability Pool.
     payable stateful entrypoint move_ae_gain_to_trove(
           borrower: address
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove =
         require_caller_is_stability_pool()
         adjust_trove'(borrower, 0, 0, false, upper_hint, lower_hint, 0)
@@ -208,8 +208,8 @@ contract BorrowerOperations =
     // Withdraw AE collateral from a trove
     payable stateful entrypoint withdraw_coll(
           coll_withdrawal: int
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove =
         adjust_trove'(Call.caller, coll_withdrawal, 0, false, upper_hint, lower_hint, 0)
 
@@ -217,16 +217,16 @@ contract BorrowerOperations =
     payable stateful entrypoint withdraw_aeusd(
           max_fee_percentage: int
         , aeusd_amount: int
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove =
         adjust_trove'(Call.caller, 0, aeusd_amount, true, upper_hint, lower_hint, max_fee_percentage)
 
     // Repay AEUSD tokens to a Trove: Burn the repaid AEUSD tokens, and reduce the trove's debt accordingly
     payable stateful entrypoint repay_aeusd(
           aeusd_amount: int
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove =
         adjust_trove'(Call.caller, 0, aeusd_amount, false, upper_hint, lower_hint, 0)
 
@@ -235,8 +235,8 @@ contract BorrowerOperations =
         , coll_withdrawal: int
         , aeusd_change: int
         , is_debt_increase: bool
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove =
         adjust_trove'( Call.caller
                     , coll_withdrawal
@@ -260,8 +260,8 @@ contract BorrowerOperations =
         , coll_withdrawal: int
         , aeusd_change: int
         , is_debt_increase: bool
-        , upper_hint: address
-        , lower_hint: address
+        , upper_hint: option(address)
+        , lower_hint: option(address)
         , max_fee_percentage: int
         ): IBorrowerOperations.adjust_trove = with_addresses( (addresses) =>
             /*ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, aeusdToken)*/

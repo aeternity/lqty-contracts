@@ -23,8 +23,8 @@ contract interface ISortedTroves =
     stateful entrypoint insert: (
           address // id
         , int     // uint256 _ICR
-        , address // prevId
-        , address // nextId
+        , option(address) // prevId
+        , option(address) // nextId
         ) => unit
 
     stateful entrypoint remove: (address /*_id*/) => unit
@@ -32,8 +32,8 @@ contract interface ISortedTroves =
     stateful entrypoint re_insert: (
           address // id
         , int     // uint256 _newICR
-        , address // prevId
-        , address // nextId
+        , option(address) // prevId
+        , option(address) // nextId
         ) => unit
 
     entrypoint contains: (address /*_id*/) => bool
@@ -56,12 +56,12 @@ contract interface ISortedTroves =
 
     entrypoint valid_insert_position: (
         address   // uint256 _ICR
-        , address // prevId
-        , address // nextId
+        , option(address) // prevId
+        , option(address) // nextId
         ) => bool
 
     entrypoint find_insert_position: (
           int     // uint256 _ICR
-        , address // prevId
-        , address // nextId
+        , option(address) // prevId
+        , option(address) // nextId
         ) => bool
