@@ -1138,8 +1138,8 @@ contract TroveManager =
     stateful entrypoint redeem_collateral(
         aeusd_amount: int
       , first_redemption_hint: option(address)
-      , upper_partial_redemption_hint: address
-      , lower_partial_redemption_hint: address
+      , upper_partial_redemption_hint: option(address)
+      , lower_partial_redemption_hint: option(address)
       , partial_redemption_hint_nicr: int
       , max_iterations: int
       , max_fee_percentage: int
@@ -1224,8 +1224,8 @@ contract TroveManager =
           redemption_totals  /*acc*/
         , int                /*step*/
         , option(address)    /*current_borrower*/
-        , address            /*upper_partial_redemption_hint*/
-        , address            /*lower_partial_redemption_hint*/
+        , option(address)    /*upper_partial_redemption_hint*/
+        , option(address)    /*lower_partial_redemption_hint*/
         , int                /*partial_redemption_hint_nicr*/
         , addresses          /*addresses*/
         ) => redemption_totals
@@ -1561,8 +1561,8 @@ contract TroveManager =
       , borrower: address
       , max_aeusd_amount: int
       , price: int
-      , upper_partial_redemption_hint
-      , lower_partial_redemption_hint: address
+      , upper_partial_redemption_hint: option(address)
+      , lower_partial_redemption_hint: option(address)
       , partial_redemption_hint_nicr: int
       ): single_redemption_values =
       let trove = state.troves[borrower]
