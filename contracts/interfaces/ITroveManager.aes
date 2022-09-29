@@ -73,8 +73,8 @@ contract interface ITroveManager =
     stateful entrypoint redeem_collateral: (
           int               // uint _AEUSDAmount,
         , option(address)   // firstRedemptionHint,
-        , address           // upperPartialRedemptionHint,
-        , address           // lowerPartialRedemptionHint,
+        , option(address)   // upperPartialRedemptionHint,
+        , option(address)   // lowerPartialRedemptionHint,
         , int               // partialRedemptionHintNICR,
         , int               // maxIterations,
         , int               // maxFee

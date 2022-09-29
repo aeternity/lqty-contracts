@@ -526,7 +526,7 @@ contract StabilityPool =
     * - Transfers the depositor's entire AE gain from the Stability Pool to the caller's trove
     * - Leaves their compounded deposit in the Stability Pool
     * - Updates snapshots for deposit and tagged front end stake */
-    stateful entrypoint withdraw_ae_gain_to_trove(upper_hint: address, lower_hint: address) = with_addresses((addresses) =>
+    stateful entrypoint withdraw_ae_gain_to_trove(upper_hint: option(address), lower_hint: option(address)) = with_addresses((addresses) =>
         let initial_deposit = Map.lookup_default(Call.caller,state.deposits,no_deposit()).initial_value
         require_user_has_deposit(initial_deposit)
         require_user_has_trove(Call.caller)
