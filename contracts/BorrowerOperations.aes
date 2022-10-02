@@ -138,7 +138,7 @@ contract BorrowerOperations =
             let is_recovery_mode: bool = check_recovery_mode'(vars.price)
 
             require_valid_max_fee_percentage(max_fee_percentage, is_recovery_mode)
-            require_troveis_not_active(addresses.trove_manager, Call.caller)
+            require_trove_is_not_active(addresses.trove_manager, Call.caller)
 
             /*vars.AEUSDFee*/ //TODO: i don't know what exactly this supposed to do
 
@@ -290,7 +290,7 @@ contract BorrowerOperations =
 
             require_singular_coll_change(coll_withdrawal)
             require_non_zero_adjustment(coll_withdrawal, aeusd_change)
-            require_troveis_active(addresses.trove_manager, borrower)
+            require_trove_is_active(addresses.trove_manager, borrower)
 
             // Confirm the operation is either a borrower adjusting their own trove,
             // or a pure AE transfer from the Stability Pool to a trove
@@ -377,7 +377,7 @@ contract BorrowerOperations =
         )
 
     stateful entrypoint close_trove() = with_addresses( (addresses) =>
-        require_troveis_active(addresses.trove_manager, Call.caller)
+        require_trove_is_active(addresses.trove_manager, Call.caller)
         let price = addresses.price_feed.fetch_price()
         require_not_in_recovery_mode(price)
 
@@ -526,11 +526,11 @@ contract BorrowerOperations =
         require(Call.value != 0 || coll_withdrawal != 0 || aeusd_change != 0,
             "BorrowerOps: There must be either a collateral change or a debt change")
 
-    function require_troveis_active(trove_manager: ITroveManager, borrower: address) =
+    function require_trove_is_active(trove_manager: ITroveManager, borrower: address) =
         require(trove_manager.get_trove_status(borrower) == 1,
             "BorrowerOps: Trove does not exist or is c losed")
 
-    function require_troveis_not_active(trove_manager: ITroveManager,borrower: address) =
+    function require_trove_is_not_active(trove_manager: ITroveManager,borrower: address) =
         require(trove_manager.get_trove_status(borrower) != 1, "BorrowerOps: Trove is active")
 
     function require_non_zero_debt_change(aeusd_change: int) =

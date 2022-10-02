@@ -20,7 +20,7 @@ describe( 'Borrower Operations', () => {
         let contracts
         let LQTYContracts
         let timeOffsetForDebugger
-	let borrowerOperationsTester
+        let borrowerOperationsTester
         const fastForwardTime = ( seconds ) => timeOffsetForDebugger.fast_forward_time(
             BigInt( seconds ) * 1000n
         )
@@ -30,9 +30,9 @@ describe( 'Borrower Operations', () => {
         utils.beforeEachWithSnapshot( 'deploy contract', async () => {
             const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
             contracts = await deployLiquityCore()
-            LQTYContracts = await deployLQTYContracts(bountyAddress, lpRewardsAddress, multisig)
+            LQTYContracts = await deployLQTYContracts( bountyAddress, lpRewardsAddress, multisig )
             troveManagerTester = contracts.troveManager
-	    borrowerOperationsTester = contracts.borrowerOperations
+            borrowerOperationsTester = contracts.borrowerOperations
 
             const deployContract = utils.deployContract( contracts.sdk )
 
@@ -47,11 +47,11 @@ describe( 'Borrower Operations', () => {
         } )
 
         it( "testing ...", async () => {
-	    const name = await borrowerOperationsTester.name()
-	    const sortedTroves = await borrowerOperationsTester.sorted_troves()
-	    
-	    //await borrowerOperationsTester.open_trove(2, 10, bountyAddress, bountyAddress)	    
-	    
+            const name = await borrowerOperationsTester.name()
+            const sortedTroves = await borrowerOperationsTester.sorted_troves()
+
+            await borrowerOperationsTester.open_trove( 2, 10, bountyAddress, bountyAddress )
+
             expect( name ).to.eq( 'BorrowerOperations' )
         } )
     } )

@@ -6,7 +6,7 @@ include "../interfaces/ILQTYToken.aes"
 include "../interfaces/IAEUSDToken.aes"
 include "../interfaces/IActivePool.aes"
 include "../interfaces/IBorrowerOperations.aes"
-include "../interfaces/ITroveManager.aes"	
+include "../interfaces/ITroveManager.aes"
 include "../dependencies/LiquityMath.aes"
 include "../dependencies/SafeMath.aes"
 include "../dependencies/Utils.aes"
@@ -27,10 +27,10 @@ contract LQTYStaking =
 	}
 
     record state = {
-          owner: option(address)    
+          owner: option(address)
         , addresses: option(addresses)
 	, stakes: map(address, int)
-	, snapshots: map(address, snapshot) 	
+	, snapshots: map(address, snapshot)
 	, total_lqty_staked: int
 	, f_ae: int
 	, f_aeusd: int
@@ -50,18 +50,18 @@ contract LQTYStaking =
     stateful entrypoint set_addresses(addresses: addresses) =
       //requirement
       only_owner()
-    
+
       put(state{addresses = Some(addresses)})
 
       Chain.event(LQTYTokenAddressSet(addresses.lqty_token))
       Chain.event(LQTYAEUSDTokenAddressSet(addresses.aeusd_token))
       Chain.event(ITroveManagerAddressSet(addresses.trove_manager))
       Chain.event(BorrowerOperationsAddressSet(addresses.borrower_operations))
-      Chain.event(ActivePoolAddressSet(addresses.active_pool))		      
+      Chain.event(ActivePoolAddressSet(addresses.active_pool))
 
       renounce_ownership()
 
-    // If caller has a pre-existing stake, send any accumulated AE and AEUSD gains to them. 
+    // If caller has a pre-existing stake, send any accumulated AE and AEUSD gains to them.
     stateful entrypoint stake(lqty_amount: int) : unit = with_addresses((addresses) =>
         require_non_zero_amount(lqty_amount)
 
@@ -81,7 +81,7 @@ contract LQTYStaking =
       	// Increase user’s stake and total LQTY staked
       	put( state {
              stakes[Call.caller] = new_stake
-	   , total_lqty_staked @ t = SafeMath.add(t, lqty_amount) 
+	   , total_lqty_staked @ t = SafeMath.add(t, lqty_amount)
            }
 	 )
       	Chain.event(TotalLQTYStakedUpdated(state.total_lqty_staked))
@@ -96,7 +96,7 @@ contract LQTYStaking =
 	  send_ae_gain_to_user(ae_gain)
       )
 
-    // Unstake the LQTY and send the it back to the caller, along with their accumulated AEUSD & AE gains. 
+    // Unstake the LQTY and send the it back to the caller, along with their accumulated AEUSD & AE gains.
     // If requested amount > stake, send their entire stake.
     stateful entrypoint unstake(lqty_amount: int) : unit = with_addresses((addresses) =>
         require_gt_zero_amount(lqty_amount)
@@ -104,7 +104,7 @@ contract LQTYStaking =
       	let current_stake = Map.lookup_default(Call.caller, state.stakes, 0)
 	require_user_has_stack(current_stake)
 
-        // Grab any accumulated AE and AEUSD gains from the current stake	
+        // Grab any accumulated AE and AEUSD gains from the current stake
       	let ae_gain = get_pending_ae_gain(Call.caller)
 	let aeusd_gain = get_pending_aeusd_gain(Call.caller)
 
@@ -118,7 +118,7 @@ contract LQTYStaking =
 	  // Decrease user's stake and total LQTY staked
 	  put( state {
                   stakes[Call.caller] = new_stake
-	        , total_lqty_staked @ t = SafeMath.sub(t, lqty_amount) 
+	        , total_lqty_staked @ t = SafeMath.sub(t, lqty_amount)
                 }
 	   )
       	  Chain.event(TotalLQTYStakedUpdated(state.total_lqty_staked))
@@ -127,7 +127,7 @@ contract LQTYStaking =
 	  addresses.lqty_token.transfer(Call.caller, lqty_to_withdraw)
 
 	  Chain.event(StakeChanged(Call.caller, new_stake))
-	   
+
 	Chain.event(StakingGainWithdrawn(Call.caller, aeusd_gain, ae_gain))
 
         // Send accumulated AEUSD and AE gains to the caller
@@ -166,7 +166,7 @@ contract LQTYStaking =
        state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_ae, state.snapshots[user].f_ae_snapshot), Utils.decimal_precision())
 
     entrypoint get_pending_aeusd_gain(user: address) : int =
-       state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_aeusd, state.snapshots[user].f_aeusd_snapshot), Utils.decimal_precision())    
+       state.stakes[user] * SafeMath.div(SafeMath.sub(state.f_aeusd, state.snapshots[user].f_aeusd_snapshot), Utils.decimal_precision())
 
     // --- Internal helper operations ---
 
@@ -175,22 +175,22 @@ contract LQTYStaking =
       Chain.event(StakerSnapshotsUpdated(user, state.f_ae, state.f_aeusd))
 
     stateful function send_ae_gain_to_user(ae_gain: int) =
-      Chain.spend(Call.caller, ae_gain) // changed order to not to send event if spend fails    
+      Chain.spend(Call.caller, ae_gain) // changed order to not to send event if spend fails
       Chain.event(AESent(Call.caller, ae_gain))
 
 
     // --- Requirements
 
     function require_caller_is_trove_maneger() : unit  = with_addresses((addresses) =>
-        require(addresses.trove_manager.address == Call.caller, "LQTYStaking: caller is not TroveM")    
+        require(addresses.trove_manager.address == Call.caller, "LQTYStaking: caller is not TroveM")
       )
 
     function require_caller_is_borrower_operations() : unit  = with_addresses((addresses) =>
-        require(addresses.borrower_operations.address == Call.caller, "LQTYStaking: caller is not BorrowerOps")    
+        require(addresses.borrower_operations.address == Call.caller, "LQTYStaking: caller is not BorrowerOps")
       )
 
     function require_caller_is_active_pool () : unit  = with_addresses((addresses) =>
-        require(addresses.active_pool.address == Call.caller, "LQTYStaking: caller is not ActivePool")    
+        require(addresses.active_pool.address == Call.caller, "LQTYStaking: caller is not ActivePool")
       )
 
     function require_user_has_stack(amount : int) : unit  =
@@ -219,16 +219,16 @@ contract LQTYStaking =
       = LQTYTokenAddressSet(ILQTYToken /*lqtyToken*/)
       | LQTYAEUSDTokenAddressSet(IAEUSDToken /*aeusdToken*/)
       // Combine two previous events in one changing parameter type to address ?
-      | F_AEUpdated(int /*f_ae*/)      
+      | F_AEUpdated(int /*f_ae*/)
       | F_AEUSDUpdated(int /*f_aeusd*/)
       | StakerSnapshotsUpdated(address /*staker*/, int /*f_ae*/, int /*f_aeusd*/)
-      | AESent(address /*accoutn*/, int /*amount*/)      
+      | AESent(address /*accoutn*/, int /*amount*/)
       | ActivePoolAddressSet(IActivePool /*activePool*/)
       | TotalLQTYStakedUpdated(int /*amount*/)
       | ITroveManagerAddressSet(ITroveManager /*troveManager*/)
       | StakeChanged(address /*staker*/, int /*newStake*/)
       | StakingGainWithdrawn(address /*staker*/, int /*aeusdGain*/, int /*aeGain*/)
-      | BorrowerOperationsAddressSet(IBorrowerOperations /*borrowerOperations*/)      
+      | BorrowerOperationsAddressSet(IBorrowerOperations /*borrowerOperations*/)
 //#inject "../dependencies/Ownable.events.aes"
 
 //#inject "../dependencies/Ownable.functions.aes"

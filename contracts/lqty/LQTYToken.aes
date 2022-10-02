@@ -6,21 +6,21 @@ include "../interfaces/ILQTYToken.aes"
 include "../interfaces/ICommunityIssuance.aes"
 include "../interfaces/IStabilityPool.aes"
 include "../interfaces/ILQTYStaking.aes"
-include "../interfaces/ILockupContractFactory.aes"	
+include "../interfaces/ILockupContractFactory.aes"
 include "../dependencies/LiquityMath.aes"
 include "../dependencies/SafeMath.aes"
 include "../dependencies/Utils.aes"
 
 /*
 * Based upon AEX9 https://github.com/aeternity/AEXs/blob/master/AEXS/aex-9.md https://github.com/mradkov/aeternity-fungible-token/blob/master/contracts/fungible-token.aes
-*  
+*
 * and their EIP2612 (ERC20Permit / ERC712) functionality:
 * https://github.com/OpenZeppelin/openzeppelin-contracts/blob/53516bc555a454862470e7860a9b5254db4d00f5/contracts/token/ERC20/ERC20Permit.sol
 * TODO: check if above functionality is important This ERC extends the ERC-20 standard with a new function permit, which allows users to modify the allowance mapping using a signed message, instead of through msg.sender.
 *
 *  --- Functionality added specific to the LQTYToken ---
-* 
-* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Liquity contracts) in external 
+*
+* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Liquity contracts) in external
 * transfer() and transferFrom() calls. The purpose is to protect users from losing tokens by mistakenly sending LQTY directly to a Liquity
 * core contract, when they should rather call the right function.
 *
@@ -39,12 +39,12 @@ include "../dependencies/Utils.aes"
 * 8) (64 + 2/3) million tokens are minted at deployment to the Liquity multisig
 *
 * 9) Until one year from deployment:
-* -Liquity multisig may only transfer() tokens to LockupContracts that have been deployed via & registered in the 
-*  LockupContractFactory 
+* -Liquity multisig may only transfer() tokens to LockupContracts that have been deployed via & registered in the
+*  LockupContractFactory
 * -create_allowance(), change_allowance(), reset_allowance() revert when called by the multisig
 * -transferFrom() reverts when the multisig is the sender
 * -sendToLQTYStaking() reverts when the multisig is the sender, blocking the multisig from staking its LQTY.
-* 
+*
 * After one year has passed since deployment of the LQTYToken, the restrictions on multisig operations are lifted
 * and the multisig has the same rights as any other address.
 */
@@ -74,12 +74,12 @@ contract LQTYToken =
 	, lqty_staking: ILQTYStaking
 	, lockup_contract_factory: ILockupContractFactory
 	, bounty: address
-	, multisig: address	
+	, multisig: address
 	// AX9 token data
 	, balances: balances
 	, total_supply: int
-	// Extension Allowance                                                                                                                                                                                                                              
-	, allowances: allowances	
+	// Extension Allowance
+	, allowances: allowances
 	, deployment_start_time: int
 	, lp_rewards_entitlement: int
         }
@@ -97,7 +97,7 @@ contract LQTYToken =
 	 , lockup_contract_factory: ILockupContractFactory
 	 , bounty: address
 	 , lp_reward: address
-	 , multisig: address	
+	 , multisig: address
 	) =
       // --- Initial LQTY allocations ---
       let bounty_entitlement = one_million() * 2 // Allocate 2 million for bounties/hackathons
@@ -111,10 +111,10 @@ contract LQTYToken =
       Chain.event(Mint(lp_reward, lp_rewards_entitlement))
 
       let multisig_entitlement = one_million() * 100 - bounty_entitlement - depositors_and_frontends_entitlement - lp_rewards_entitlement
-                                                                                                                   
+
       Chain.event(Mint(multisig, multisig_entitlement))
-	
-      {  
+
+      {
          community_issuance = community_issuance
        , lqty_staking = lqty_staking
        , lockup_contract_factory = lockup_contract_factory
@@ -134,7 +134,7 @@ contract LQTYToken =
 
     // --- AX9 meta information --
     entrypoint meta_info(): meta_info = {name = "LQTY", symbol = "LQTY", decimals = 18}
-    
+
     entrypoint total_supply(): int = state.total_supply
 
     entrypoint get_deployment_start_time(): int = state.deployment_start_time
@@ -154,7 +154,7 @@ contract LQTYToken =
     // TODO: is this part of AEX9 Allowance extension, maybe put it in common code ?
     entrypoint allowance(allowance_accounts : allowance_accounts) : option(int) =
         Map.lookup(allowance_accounts, state.allowances)
-    
+
     // TODO: is called approve in solidity contract
     stateful entrypoint create_allowance(for_account: address, value: int) =
       if (is_first_year())
@@ -171,7 +171,7 @@ contract LQTYToken =
 
       internal_transfer(sender, recipient, amount)
       internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
-    
+
     stateful entrypoint change_allowance(sender: address,  recipient: address, amount: int) : unit =
       if (is_first_year())
       	 require_caller_is_not_multisig()
@@ -188,41 +188,41 @@ contract LQTYToken =
 
       internal_change_allowance({from_account=Call.caller, for_account=for_account}, 0)
 
-    stateful entrypoint send_to_lqty_staking(sender: address, amount: int) : unit = 
+    stateful entrypoint send_to_lqty_staking(sender: address, amount: int) : unit =
       require_caller_is_lqty_staking()
-      
+
       if (is_first_year())
        require_sender_is_not_multisig(sender)
-	 
+
       internal_transfer(sender, state.lqty_staking.address, amount)
 
     // helper functions
 
-    function caller_is_multisig() : bool = 
+    function caller_is_multisig() : bool =
       Call.caller == state.multisig
 
 
     function is_first_year() : bool =
-      Chain.timestamp - state.deployment_start_time < one_year_in_miliseconds() 
+      Chain.timestamp - state.deployment_start_time < one_year_in_miliseconds()
 
     // --- Requirements
-    function require_valid_recipient(recipient: address) : unit = 
+    function require_valid_recipient(recipient: address) : unit =
       require(recipient != Contract.address, "LQTY: Cannot transfer tokens directly to the LQTY token contract or the zero address")
 
       require(recipient != state.community_issuance.address && recipient != state.lqty_staking.address, "LQTY: Cannot transfer tokens directly to the community issuance or staking contract")
 
-    function require_recipient_is_registered_lc(recipient: address) : unit = 
+    function require_recipient_is_registered_lc(recipient: address) : unit =
       require(state.lockup_contract_factory.is_registered_lockup(recipient), "LQTYToken: recipient must be a LockupContract registered in the Factory")
 
-      
-    function require_sender_is_not_multisig(sender: address) : unit = 
+
+    function require_sender_is_not_multisig(sender: address) : unit =
       require(sender != state.multisig, "LQTYToken: sender must not be the multisig")
 
-    function require_caller_is_not_multisig() : unit = 
+    function require_caller_is_not_multisig() : unit =
       require(! caller_is_multisig() , "LQTYToken: caller must not be the multisig")
 
 
-    function require_caller_is_lqty_staking() : unit = 
+    function require_caller_is_lqty_staking() : unit =
       require(Call.caller == state.lqty_staking.address, "LQTYToken: caller must be the LQTYStaking contract")
 
 
@@ -231,7 +231,7 @@ contract LQTYToken =
       = CommunityIssuanceAddressSet(ICommunityIssuance /*communityIssuanceAddress*/)
       | LQTYStakingAddressSet(ILQTYStaking /*lqtyStaking*/)
       | LockupContractFactoryAddressSet(ILockupContractFactory /*lockupContractFactory*/)
-//#inject "../dependencies/AEX9.events.aes"      
+//#inject "../dependencies/AEX9.events.aes"
 
     //------------------------------------------------------------------------------
     // EXTENTIONS

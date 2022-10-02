@@ -92,7 +92,7 @@ const createSdkInstance = async ( {
         interval    : 50,
         //TODO:  do we really need this in the new sdk?
         address     : wallet ? wallet.publicKey : WALLETS[0].publicKey,
-    } )
+    },  )
     await Promise.all(
         accounts.map( ( account, index ) => client.addAccount(
             account,
@@ -116,7 +116,10 @@ const deployContract_ = ( client, logMe, injectDebugCode ) => async ( { source, 
             contract_content = source
         }
 
-        const contract          = await client.getContractInstance( { source: contract_content, fileSystem } )
+        const contract          = await client.getContractInstance( {
+            source      : contract_content, fileSystem,
+            omitUnknown : true,
+        } )
         const deployment_result = await contract.deploy( params )
         logMe && console.log( deployment_result )
         logMe && console.log( '-------------------------------------  END  ---------------------------------------------------------' )

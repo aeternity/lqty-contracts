@@ -15,7 +15,7 @@ contract CommunityIssuance =
 
     record addresses = {
           lqty_token: ILQTYToken
-        , stability_pool: IStabilityPool	  
+        , stability_pool: IStabilityPool
         }
 
     record state = {
@@ -72,10 +72,10 @@ contract CommunityIssuance =
     f: issuance factor that determines the shape of the curve
     t:  time passed since last LQTY issuance event  */
     function get_cumulative_issuance_fraction(): int =
-      // Get the time passed since deployment	
+      // Get the time passed since deployment
       let time_passed_in_minutes = SafeMath.div(SafeMath.sub(Chain.timestamp, state.deployed_time), milliseconds_in_one_minute())
 
-      // f^t			 
+      // f^t
       let power = LiquityMath.dec_pow(issuance_factor(), time_passed_in_minutes)
 
       //  (1 - f^t)
@@ -89,7 +89,7 @@ contract CommunityIssuance =
 
         addresses.lqty_token.transfer(account, lqty_amount)
       )
-      
+
     //------------------------------------------------------------------------------
     // CONSTRAINTS
     //------------------------------------------------------------------------------
