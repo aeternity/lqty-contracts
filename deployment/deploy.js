@@ -84,14 +84,8 @@ const deploy = async ( secretKey, network, compiler ) => {
             /* 13 */ () => deployContract( './contracts/CollSurplusPool.aes',
                 [],
             ),
-            /* 14 */ () => deployContract( './contracts/AEUSDToken.aes',
-                [ fakeAddress, fakeAddress, fakeAddress ],
-            ),
             /* 15 */ () => deployContract( './contracts/DefaultPool.aes',
                 [],
-            ),
-            /* 16 */ () => deployContract( './contracts/AEUSDToken.aes',
-   	        [ fakeAddressCt, fakeAddressCt, fakeAddressCt ],
             ),
             /* 17 */ () => deployContract( './contracts/GasPool.aes',
                 [  ],
@@ -99,7 +93,7 @@ const deploy = async ( secretKey, network, compiler ) => {
 	    
         ]
     //for ( const dep of deployments ) { await dep() }
-    await deployments[4]()
+    await deployments[6]()
 }
 
 module.exports = {
