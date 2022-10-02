@@ -108,6 +108,14 @@ contract TroveManager =
       int_to_status  (4)   = ClosedByRedemption
       int_to_status  (_)   = abort("invalid status value")
 
+    function
+      status_to_int: (status)               => int
+      status_to_int  (NonExistent)          = 0
+      status_to_int  (Active)               = 1
+      status_to_int  (ClosedByOwner)        = 2
+      status_to_int  (ClosedByLiquidation)  = 3
+      status_to_int  (ClosedByRedemption)   = 4
+
 
     datatype trove_manager_operation
       = ApplyPendingRewards
@@ -1454,8 +1462,8 @@ contract TroveManager =
           , max_borrowing_fee()
           )
 
-    entrypoint get_trove_status(borrower: address): status =
-        state.troves[borrower].status
+    entrypoint get_trove_status(borrower: address): int =
+        status_to_int(Map.lookup_default(borrower,state.troves,null_trove()).status)
 
     entrypoint get_trove_stake(borrower: address): int =
         state.troves[borrower].stake

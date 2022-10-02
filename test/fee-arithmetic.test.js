@@ -29,7 +29,7 @@ describe( 'Fee arithmetic tests', () => {
         utils.beforeEachWithSnapshot( 'deploy contract', async () => {
             const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
             contracts = await deployLiquityCore()
-            LQTYContracts = await deployLQTYContracts(bountyAddress, lpRewardsAddress, multisig)
+            LQTYContracts = await deployLQTYContracts( bountyAddress, lpRewardsAddress, multisig )
             troveManagerTester = contracts.troveManager
 
             const deployContract = utils.deployContract( contracts.sdk )

@@ -13,7 +13,7 @@ const withLoggingAddresses = ( ret ) => {
         const obj = ret[key]
         if ( typeof obj.address === 'string'  ) {
             const cloned = { ...acc }
-            cloned[key] = obj.address 
+            cloned[key] = obj.address
             return cloned
         } else acc
     }, {} ) )
@@ -26,10 +26,10 @@ const setupDeployment = async () => {
     const stabilityPool = await deploy( './contracts/StabilityPool.aes' )
     const borrowerOperations = await deploy( './contracts/BorrowerOperations.aes' )
 
-    const communityIssuance = await deploy('./contracts/lqty/CommunityIssuance.aes')
+    const communityIssuance = await deploy( './contracts/lqty/CommunityIssuance.aes' )
     const lqtyStaking = await deploy( './contracts/lqty/LQTYStaking.aes' )
     const lockupContractFactory = await deploy( './contracts/lqty/LockupContractFactory.aes' )
-    
+
     return {
         deployLiquityCore: async () => {
             return withLoggingAddresses( {
@@ -39,11 +39,11 @@ const setupDeployment = async () => {
                 troveManager       : troveManager,
                 collSurplusPool    : await deploy( './contracts/CollSurplusPool.aes' ),
                 borrowerOperations : borrowerOperations,
-                activePool    : await deploy( './contracts/ActivePool.aes' ),
-                defaultPool   : await deploy( './test/contracts/PlaceholderContract.aes' ),
-                stabilityPool : stabilityPool,
-                gasPool       : await deploy( './contracts/GasPool.aes' ),
-                aeusdToken    : await deploy( './contracts/AEUSDToken.aes', [troveManager.address, stabilityPool.address, borrowerOperations.address] ),
+                activePool         : await deploy( './contracts/ActivePool.aes' ),
+                defaultPool        : await deploy( './contracts/DefaultPool.aes' ),
+                stabilityPool      : stabilityPool,
+                gasPool            : await deploy( './contracts/GasPool.aes' ),
+                aeusdToken         : await deploy( './contracts/AEUSDToken.aes', [ troveManager.address, stabilityPool.address, borrowerOperations.address ] ),
 
                 //const functionCaller = await FunctionCaller.new()
                 //const hintHelpers = await HintHelpers.new()
@@ -52,23 +52,30 @@ const setupDeployment = async () => {
 
         deployLQTYContracts: async ( bountyAddress, lpRewardsAddress, multisigAddress ) => {
             return withLoggingAddresses( {
-                lqtyStaking           : lqtyStaking,
-                lockupContractFactory : lockupContractFactory,
-                communityIssuance     : communityIssuance,
-                lqtyToken             : await deploy( './contracts/lqty/LQTYToken.aes', [communityIssuance.address, lqtyStaking.address, lockupContractFactory.address, bountyAddress, lpRewardsAddress, multisigAddress ] ), // await deploy( './test/contracts/PlaceholderContract.aes' )
+                lqtyStaking,
+                lockupContractFactory,
+                communityIssuance,
+                lqtyToken: await deploy( './contracts/lqty/LQTYToken.aes', [
+                    communityIssuance.address,
+                    lqtyStaking.address,
+                    lockupContractFactory.address,
+                    bountyAddress,
+                    lpRewardsAddress,
+                    multisigAddress
+                ] ),
             } )
         }
     }
 }
 const connectCoreContracts = async ( contracts, LQTYContracts ) => {
 
-    // set TroveManager addr in SortedTroves
+    // interlink necessarily contracts
     await contracts.sortedTroves.set_params(
         maxBytes32,
         contracts.troveManager.address,
         contracts.borrowerOperations.address
     )
-    // set contracts in the Trove Manager
+
     await contracts.troveManager.set_addresses( {
         borrower_operations : contracts.borrowerOperations.address,
         stability_pool      : contracts.stabilityPool.address,
@@ -83,7 +90,6 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
         lqty_staking        : LQTYContracts.lqtyStaking.address
     } )
     //
-    // set contracts in BorrowerOperations
     await contracts.borrowerOperations.set_addresses( {
         trove_manager     : contracts.troveManager.address,
         stability_pool    : contracts.stabilityPool.address,
@@ -97,6 +103,51 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
         gas_pool          : contracts.gasPool.accountAddress,
     }
     )
+
+    await contracts.defaultPool.set_addresses( {
+        trove_manager : contracts.troveManager.address,
+        active_pool   : contracts.activePool.address,
+    } )
+
+    await contracts.activePool.set_addresses( {
+        borrower_operations : contracts.borrowerOperations.address,
+        trove_manager       : contracts.troveManager.address,
+        stability_pool      : contracts.stabilityPool.address,
+        default_pool        : contracts.defaultPool.address,
+    } )
+
+    await contracts.collSurplusPool.set_addresses( {
+        borrower_operations : contracts.borrowerOperations.address,
+        trove_manager       : contracts.troveManager.address,
+        active_pool         : contracts.activePool.address,
+    } )
+
+    await contracts.stabilityPool.set_addresses( {
+        borrower_operations : contracts.borrowerOperations.address,
+        trove_manager       : contracts.troveManager.address,
+        aeusd_token         : contracts.aeusdToken.address,
+        sorted_troves       : contracts.sortedTroves.address,
+        community_issuance  : LQTYContracts.communityIssuance.address,
+        active_pool         : contracts.activePool.address,
+        default_pool        : contracts.defaultPool.address,
+        price_feed          : contracts.priceFeedTestnet.address,
+    } )
+
+    await LQTYContracts.lqtyStaking.set_addresses( {
+        lqty_token          : LQTYContracts.lqtyToken.address,
+        aeusd_token         : contracts.aeusdToken.address,
+        trove_manager       : contracts.troveManager.address,
+        borrower_operations : contracts.borrowerOperations.address,
+        active_pool         : contracts.activePool.address,
+    } )
+
+    //TODO: uncomment this after solving the problem with :
+    //"CommunityIssuance: When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
+    //await LQTYContracts.communityIssuance.set_addresses( {
+    //lqty_token     : LQTYContracts.lqtyToken.address,
+    //stability_pool : contracts.stabilityPool.address,
+    //} )
+
 }
 
 module.exports = {

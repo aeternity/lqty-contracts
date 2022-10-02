@@ -41,7 +41,7 @@ module.exports = {
         [ 50309080980, 838484683 ],
     ],
 
-  /* Object holds arrays for seconds passed, and the corresponding expected decayed base rate, given an initial
+    /* Object holds arrays for seconds passed, and the corresponding expected decayed base rate, given an initial
   base rate */
 
     decayBaseRateResults: {
@@ -252,7 +252,7 @@ module.exports = {
         ]
     },
 
-  // Exponent in range [2, 300]
+    // Exponent in range [2, 300]
     exponentiationResults: [
         [ 187706062567632000, 17, 445791 ],
         [ 549137589365708000, 2, 301552092054380000 ],
