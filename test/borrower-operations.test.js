@@ -47,10 +47,10 @@ describe( 'Borrower Operations', () => {
         } )
 
         it( "testing ...", async () => {
-	    const name = await borrowerOperationsTester.name() //open_trove(2, 10, bountyAddress, bountyAddress)
+	    const name = await borrowerOperationsTester.name()
 	    const sortedTroves = await borrowerOperationsTester.sorted_troves()
 	    
-	    await borrowerOperationsTester.open_trove(2, 10, bountyAddress, bountyAddress)	    
+	    //await borrowerOperationsTester.open_trove(2, 10, bountyAddress, bountyAddress)	    
 	    
             expect( name ).to.eq( 'BorrowerOperations' )
         } )
