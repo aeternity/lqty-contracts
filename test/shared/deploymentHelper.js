@@ -141,12 +141,10 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
         active_pool         : contracts.activePool.address,
     } )
 
-    //TODO: uncomment this after solving the problem with :
-    //"CommunityIssuance: When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
-    //await LQTYContracts.communityIssuance.set_addresses( {
-    //lqty_token     : LQTYContracts.lqtyToken.address,
-    //stability_pool : contracts.stabilityPool.address,
-    //} )
+    await LQTYContracts.communityIssuance.set_addresses( {
+      lqty_token     : LQTYContracts.lqtyToken.address,
+      stability_pool : contracts.stabilityPool.address,
+    } )
 
 }
 
