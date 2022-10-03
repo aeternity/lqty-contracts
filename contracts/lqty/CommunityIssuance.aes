@@ -96,7 +96,7 @@ contract CommunityIssuance =
 
     function require_lqty_balance_ge_lqty_supply_cap() = with_addresses((addresses) =>
         require(
-            Option.match(false, (balance) => balance  >= lqty_supply_cap(), addresses.lqty_token.balance(Call.caller))
+            Option.match(false, (balance) => balance  >= lqty_supply_cap(), addresses.lqty_token.balance(Contract.address))
           , "CommunityIssuance: When LQTYToken deployed, it should have transferred CommunityIssuance's LQTY entitlement"
 	  )
       )
