@@ -136,7 +136,7 @@ contract LQTYStaking =
       )
 
     // --- Reward-per-unit-staked increase functions. Called by Liquity core contracts ---
-    stateful entrypoint increaseF_ae(ae_fee: int) =
+    stateful entrypoint increase_f_ae(ae_fee: int) =
       require_caller_is_trove_maneger()
 
       let ae_fee_per_lqty_staked =
@@ -148,7 +148,7 @@ contract LQTYStaking =
       put( state { f_ae @ f = SafeMath.add(f, ae_fee_per_lqty_staked) })
       Chain.event(F_AEUpdated(state.f_ae))
 
-    stateful entrypoint increaseF_aeusd(aeusd_fee: int) =
+    stateful entrypoint increase_f_aeusd(aeusd_fee: int) =
       require_caller_is_borrower_operations()
 
       let aeusd_fee_per_lqty_staked =

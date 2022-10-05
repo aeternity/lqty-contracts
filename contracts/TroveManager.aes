@@ -1392,7 +1392,7 @@ contract TroveManager =
 
     stateful entrypoint set_trove_status(borrower: address, num: int) =
         require_caller_is_borrower_operations()
-        put(state{ troves[borrower] @ t = t { status = int_to_status(num) } } )
+        put(state{ troves @ t = t { [borrower = null_trove()]@ b = b { status = int_to_status(num) } } } )
 
     stateful entrypoint increase_trove_coll(borrower: address, coll_increase: int): int =
         require_caller_is_borrower_operations()
