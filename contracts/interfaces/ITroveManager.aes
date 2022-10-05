@@ -82,7 +82,7 @@ contract interface ITroveManager =
 
     stateful entrypoint update_stake_and_total_stakes: (address /*_borrower*/) => int
 
-    stateful entrypoint update_trove_reward_snapshots: (address /*_borrower*/) => int
+    stateful entrypoint update_trove_reward_snapshots: (address /*_borrower*/) => unit
 
     stateful entrypoint add_trove_owner_to_array: (address /*_borrower*/) => int
 
@@ -127,7 +127,7 @@ contract interface ITroveManager =
 
     entrypoint get_trove_coll: (address /*_borrower*/) => int
 
-    stateful entrypoint set_trove_status: (address /*_borrower*/, int /*uint num*/) => int
+    stateful entrypoint set_trove_status: (address /*_borrower*/, int /*uint num*/) => unit
 
     stateful entrypoint increase_trove_coll: (address /*_borrower*/, int /*uint _collIncrease*/) => int
 

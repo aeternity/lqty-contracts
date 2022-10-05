@@ -157,6 +157,7 @@ contract BorrowerOperations =
             let vars = vars {  icr = LiquityMath.compute_cr(Call.value, vars.composite_debt, vars.price)
                              , nicr = LiquityMath.compute_nominal_cr(Call.value, vars.composite_debt)
                              }
+	    
             if (is_recovery_mode)
                 require_icr_is_above_ccr(vars.icr)
             else
