@@ -1468,7 +1468,7 @@ contract TroveManager =
     entrypoint get_trove_stake(borrower: address): int =
         state.troves[borrower].stake
 
-    entrypoint getTroveDebt(borrower: address): int =
+    entrypoint get_trove_debt(borrower: address): int =
         state.troves[borrower].debt
 
     entrypoint get_trove_coll(borrower: address): int =
