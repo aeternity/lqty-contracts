@@ -58,7 +58,7 @@ contract AEUSDToken =
     // ENTRYPOINTS
     //------------------------------------------------------------------------------
 
-    entrypoint aex9_extensions() : list(string) = ["allowances", "mintable", "burnable"]
+    entrypoint aex9_extensions() : list(string) = ["allowances", "mintable"]
 
     // init
     entrypoint init
@@ -105,12 +105,13 @@ contract AEUSDToken =
 
     // Destroys `value` tokens from `Call.caller`, reducing the total supply.
     // `Burn` event with `Call.caller` address and `value`.
-    stateful entrypoint burn(value: int) =
+    //NOTE: this is not an AEX9 standard burn function but we still keep the standard Burn event signature
+    stateful entrypoint burn(account: address, value: int) =
         require_caller_is_bo_or_trovem_or_sp()
-        require_balance(Call.caller, value)
+        require_balance(account, value)
         require_non_negative_value(value)
-        put(state{ total_supply = state.total_supply - value, balances[Call.caller] @ b = b - value })
-        Chain.event(Burn(Call.caller, value))
+        put(state{ total_supply = state.total_supply - value, balances[account] @ b = b - value })
+        Chain.event(Burn(account, value))
 
     /// Transfer the balance of `value` from `Call.caller` to `to_account` account
     stateful entrypoint transfer(to_account: address, value: int) =
