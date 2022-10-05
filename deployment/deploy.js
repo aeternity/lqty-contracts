@@ -89,10 +89,13 @@ const deploy = async ( secretKey, network, compiler ) => {
             ),
             /* 15 */ () => deployContract( './contracts/GasPool.aes',
                 [  ],
+            ),
+            /* 16 */ () => deployContract( './contracts/AEUSDToken.aes',
+                [  fakeAddressCt, fakeAddressCt, fakeAddressCt, ],
             )
         ]
     //for ( const dep of deployments ) { await dep() }
-    await deployments[6]()
+    await deployments[16]()
 }
 
 module.exports = {
