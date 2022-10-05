@@ -46,13 +46,24 @@ describe( 'Borrower Operations', () => {
 
         } )
 
-        it( "testing open trove", async () => {
+        it( "Open trove", async () => {
             const name = await borrowerOperationsTester.name()
             //const sortedTroves = await borrowerOperationsTester.sorted_troves()
 
             await borrowerOperationsTester.open_trove( 5000000000000000, 1800000000000000000000, bountyAddress, bountyAddress, { amount: 500000000000 } )
 
+            await borrowerOperationsTester.add_coll( bountyAddress, bountyAddress, { amount: 500000000000 } )
+	    
             expect( name ).to.eq( 'BorrowerOperations' )
         } )
+
+        // it( "Add collateral trove", async () => {
+        //     const name = await borrowerOperationsTester.name()
+
+
+
+        //     expect( name ).to.eq( 'BorrowerOperations' )
+        // } )
+	
     } )
 } )
