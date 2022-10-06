@@ -25,7 +25,7 @@ describe( 'Borrower Operations', () => {
             BigInt( seconds ) * 1000n
         )
 
-        const [ bountyAddress, lpRewardsAddress, multisig ] = accounts.slice( accounts.length - 3, accounts.length )
+        const [ bob, alice, bountyAddress, lpRewardsAddress, multisig ] = accounts.slice( accounts.length - 5, accounts.length )
 
         utils.beforeEachWithSnapshot( 'deploy contract', async () => {
             const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
@@ -49,21 +49,25 @@ describe( 'Borrower Operations', () => {
         it( "Open trove", async () => {
             const name = await borrowerOperationsTester.name()
             //const sortedTroves = await borrowerOperationsTester.sorted_troves()
+            const theAccount = contracts.sdk.accounts[bob]
+            await borrowerOperationsTester.open_trove(
+                5000000000000000,
+                1800000000000000000000,
+                bountyAddress,
+                bountyAddress,
+                { onAccount: theAccount, amount: 500000000000 }
+            )
 
-            await borrowerOperationsTester.open_trove( 5000000000000000, 1800000000000000000000, bountyAddress, bountyAddress, { amount: 500000000000 } )
+            await borrowerOperationsTester.add_coll( bountyAddress, bountyAddress, { onAccount: theAccount, amount: 500000000000 } )
 
-            await borrowerOperationsTester.add_coll( bountyAddress, bountyAddress, { amount: 500000000000 } )
-	    
             expect( name ).to.eq( 'BorrowerOperations' )
         } )
 
         // it( "Add collateral trove", async () => {
         //     const name = await borrowerOperationsTester.name()
 
-
-
         //     expect( name ).to.eq( 'BorrowerOperations' )
         // } )
-	
+
     } )
 } )
