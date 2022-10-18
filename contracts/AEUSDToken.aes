@@ -175,6 +175,9 @@ contract AEUSDToken =
 
     //TODO: add permit entrypoints
 
+    // --- External functions ---
+    entrypoint total_supply(): int = state.total_supply
+
     //------------------------------------------------------------------------------
     // CONSTRAINTS
     //------------------------------------------------------------------------------

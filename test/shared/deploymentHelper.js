@@ -52,9 +52,9 @@ const setupDeployment = async () => {
 
         deployLQTYContracts: async ( bountyAddress, lpRewardsAddress, multisigAddress ) => {
             return withLoggingAddresses( {
-                lqtyStaking,
-                lockupContractFactory,
-                communityIssuance,
+                lqtyStaking: lqtyStaking,
+                contractFactory: lockupContractFactory,
+                communityIssuance: communityIssuance,
                 lqtyToken: await deploy( './contracts/lqty/LQTYToken.aes', [
                     communityIssuance.address,
                     lqtyStaking.address,

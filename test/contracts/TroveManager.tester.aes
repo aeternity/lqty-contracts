@@ -3,7 +3,7 @@
     entrypoint compute_icr(coll: int, debt: int, price: int)=
         LiquityMath.compute_cr(coll, debt, price)
 
-    entrypoint get_aeusd_gas_compensation() = aeusd_gas_compensation'()
+    entrypoint get_aeusd_gas_compensation() = aeusd_gas_compensation()
 
     stateful entrypoint unprotected_decay_base_rate_from_borrowing(): int =
         let base_rate = calc_decayed_base_rate'()
