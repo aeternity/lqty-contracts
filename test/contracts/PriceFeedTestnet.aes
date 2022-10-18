@@ -8,7 +8,7 @@ include "../../contracts/dependencies/Utils.aes"
 */
 contract PriceFeedTestnet =
     record state = { price: int}
-    entrypoint init() = { price = 20000000000 * Utils.decimal_precision()}
+    entrypoint init() = { price = 200 * 1000000000000000000}
 
     /*// --- Functions ---*/
 

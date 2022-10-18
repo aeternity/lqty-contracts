@@ -522,9 +522,8 @@ contract TroveManager =
             ))
           Chain.event(TroveUpdated(
                 borrower
-              , 0
               , Utils.xsToPayload'(
-                  [0, 0]
+                  [0, 0, 0]
                 , trove_manager_operation_to_str(operation))
               ) )
 
@@ -786,7 +785,7 @@ contract TroveManager =
               entire_trove_debt = entire_trove_debt
             , entire_trove_coll = entire_trove_coll
             , coll_gas_compensation = get_coll_gas_compensation'(entire_trove_coll)
-            , aeusd_gas_compensation = aeusd_gas_compensation'()
+            , aeusd_gas_compensation = aeusd_gas_compensation()
             }
           let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
           // If ICR <= 100%, purely redistribute the Trove across all active Troves
@@ -865,7 +864,7 @@ contract TroveManager =
             entire_trove_debt = entire_trove_debt
           , entire_trove_coll = entire_trove_coll
           , coll_gas_compensation = get_coll_gas_compensation'(entire_trove_coll)
-          , aeusd_gas_compensation = aeusd_gas_compensation'()
+          , aeusd_gas_compensation = aeusd_gas_compensation()
           }
         let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
 
@@ -976,7 +975,7 @@ contract TroveManager =
         )
 
     // Return the Troves entire debt and coll, including pending rewards from redistributions.
-    function get_entire_debt_and_coll(
+    entrypoint get_entire_debt_and_coll(
       borrower: address
       ): (int /*debt*/ * int /*coll*/ * int /*pending_aeusd_debt_reward*/ * int /*pending_ae_reward*/) =
 
@@ -1109,7 +1108,7 @@ contract TroveManager =
       {  entire_trove_debt      = entire_trove_debt
        , entire_trove_coll      = entire_trove_coll
        , coll_gas_compensation  = coll_gas_compensation
-       , aeusd_gas_compensation = aeusd_gas_compensation'()
+       , aeusd_gas_compensation = aeusd_gas_compensation()
        , debt_to_offset         = entire_trove_debt
        , coll_to_send_to_sp     = SafeMath.sub(capped_coll_portion,coll_gas_compensation)
        , coll_surplus           = SafeMath.sub(entire_trove_coll,capped_coll_portion)
@@ -1474,6 +1473,9 @@ contract TroveManager =
     entrypoint get_trove_coll(borrower: address): int =
         state.troves[borrower].coll
 
+    entrypoint get_last_fee_operation_time(): int =
+    	state.last_fee_operation_time  
+
     //------------------------------------------------------------------------------
     // CONSTRAINTS
     //------------------------------------------------------------------------------
@@ -1557,9 +1559,8 @@ contract TroveManager =
           let trove = state.troves[borrower]
           Chain.event(TroveUpdated(
                 borrower
-              , trove.debt
               , Utils.xsToPayload'(
-                  [trove.coll, trove.stake]
+                  [trove.debt, trove.coll, trove.stake]
                 , trove_manager_operation_to_str(ApplyPendingRewards))
               ) )
 
@@ -1574,7 +1575,7 @@ contract TroveManager =
       , partial_redemption_hint_nicr: int
       ): single_redemption_values =
       let trove = state.troves[borrower]
-      let aeusd_lot = LiquityMath.min( max_aeusd_amount, SafeMath.sub(trove.debt,aeusd_gas_compensation'()))
+      let aeusd_lot = LiquityMath.min( max_aeusd_amount, SafeMath.sub(trove.debt,aeusd_gas_compensation()))
       let single_redemption = init_single_redemption_values(){
           // Determine the remaining amount (lot) to be redeemed, capped by the entire debt of the Trove minus the liquidation reserve
           aeusd_lot = aeusd_lot
@@ -1585,16 +1586,15 @@ contract TroveManager =
       let new_debt = SafeMath.sub(trove.debt,single_redemption.aeusd_lot)
       let new_coll = SafeMath.sub(trove.coll,single_redemption.ae_lot)
 
-      if (new_debt == aeusd_gas_compensation'())
+      if (new_debt == aeusd_gas_compensation())
           // No debt left in the Trove (except for the liquidation reserve), therefore the trove gets closed
           remove_stake'(borrower)
           close_trove'(borrower, ClosedByRedemption)
           redeem_close_trove(addresses, borrower, new_debt, new_coll)
           Chain.event(TroveUpdated(
                 borrower
-              , 0
               , Utils.xsToPayload'(
-                  [0, 0]
+                  [0, 0, 0]
                 , trove_manager_operation_to_str(RedeemCollateral))
               ) )
           single_redemption
@@ -1621,9 +1621,8 @@ contract TroveManager =
 
             Chain.event(TroveUpdated(
                   borrower
-                , new_debt
                 , Utils.xsToPayload'(
-                    [new_coll, state.troves[borrower].stake]
+                    [new_debt, new_coll, state.troves[borrower].stake]
                   , trove_manager_operation_to_str(RedeemCollateral))
                 ) )
             single_redemption
@@ -1688,8 +1687,13 @@ contract TroveManager =
           SafeMath.sub(get_timestamp(),state.last_fee_operation_time),
           milliseconds_in_one_minute() )
 
+    // Return the nominal collateral ratio (ICR) of a given Trove, without the price. Takes a trove's pending coll and debt rewards from redistributions into account.
+    entrypoint get_nominal_icr(borrower: address) =
+        let (current_ae, current_aeusd_debt) = get_current_trove_amounts(borrower)
+        LiquityMath.compute_nominal_cr(current_ae, current_aeusd_debt)
+
     // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
-    function get_current_icr(borrower: address, price: int) =
+    entrypoint get_current_icr(borrower: address, price: int) =
         let (current_ae, current_aeusd_debt) = get_current_trove_amounts(borrower)
         LiquityMath.compute_cr(current_ae, current_aeusd_debt, price)
 
@@ -1785,10 +1789,10 @@ contract TroveManager =
           )
       | TroveUpdated(
             address  /*borrower*/
-          , int /*debt*/
           , string
           /*
           , TroveManagerOperation
+	  , int debt
           , int coll
           , int stake
           */
