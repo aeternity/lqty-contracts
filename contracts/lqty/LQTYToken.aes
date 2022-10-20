@@ -10,6 +10,7 @@ include "../interfaces/ILockupContractFactory.aes"
 include "../dependencies/LiquityMath.aes"
 include "../dependencies/SafeMath.aes"
 include "../dependencies/Utils.aes"
+include "../interfaces/ITimestampOffsetForDebug.aes"
 
 /*
 * Based upon AEX9 https://github.com/aeternity/AEXs/blob/master/AEXS/aex-9.md https://github.com/mradkov/aeternity-fungible-token/blob/master/contracts/fungible-token.aes
@@ -82,6 +83,8 @@ contract LQTYToken =
 	, allowances: allowances
 	, deployment_start_time: int
 	, lp_rewards_entitlement: int
+	//NOTE: don't use this for production deployment
+      	, timestamp_offset_for_debug: option(ITimestampOffsetForDebug)
         }
 
     //------------------------------------------------------------------------------
@@ -125,6 +128,7 @@ contract LQTYToken =
        , total_supply = bounty_entitlement + depositors_and_frontends_entitlement + lp_rewards_entitlement + multisig_entitlement
        , deployment_start_time = Chain.timestamp
        , lp_rewards_entitlement = lp_rewards_entitlement
+       , timestamp_offset_for_debug = None       
        }
 
 
@@ -157,10 +161,18 @@ contract LQTYToken =
 
     // TODO: is called approve in solidity contract
     stateful entrypoint create_allowance(for_account: address, value: int) =
-      if (is_first_year())
-      	 require_caller_is_not_multisig()
-
-      internal_change_allowance({from_account = Call.caller, for_account = for_account}, value)
+      // Check if the passed value is not negative
+      require_non_negative_value(value)
+      // Set the allowance account pair in the memory variable
+      let allowance_accounts = { from_account =  Call.caller, for_account = for_account }
+      // Check if there is no allowance already present in the state
+      // for these particular accounts pair.
+      require_allowance_not_existent(allowance_accounts)
+      // Save the allowance value for these accounts pair in the state
+      put(state{ allowances[allowance_accounts] = value })
+      // Fire Allowance event to include it in the transaction event log
+      Chain.event(Allowance(Call.caller, for_account, value))
+    
 
     // TODO: transfer_from in solidity contract
     stateful entrypoint transfer_allowance(sender: address,  recipient: address, amount: int) : unit =
@@ -192,7 +204,7 @@ contract LQTYToken =
       require_caller_is_lqty_staking()
 
       if (is_first_year())
-       require_sender_is_not_multisig(sender)
+        require_sender_is_not_multisig(sender)
 
       internal_transfer(sender, state.lqty_staking.address, amount)
 
@@ -203,7 +215,7 @@ contract LQTYToken =
 
 
     function is_first_year() : bool =
-      Chain.timestamp - state.deployment_start_time < one_year_in_miliseconds()
+      get_timestamp() - state.deployment_start_time < one_year_in_miliseconds()
 
     // --- Requirements
     function require_valid_recipient(recipient: address) : unit =
@@ -237,4 +249,8 @@ contract LQTYToken =
     // EXTENTIONS
     //------------------------------------------------------------------------------
 //#inject "../dependencies/AEX9.functions.aes"
+//#inject "../dependencies/Timestamp.function.aes"
 
+//This should be available just for debug/tests
+//#inject-debug "../../test/contracts/TimestampOffsetSetter.tester.aes"
+//#inject-debug "../../test/contracts/LQTYToken.tester.aes"

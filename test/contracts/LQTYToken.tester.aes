@@ -1,0 +1,12 @@
+
+    stateful entrypoint  unprotected_mint(account: address, value: int ) =
+        // No check for the caller here
+
+        put(state
+          { total_supply = state.total_supply + value
+          , balances[account = 0] @ b = b + value
+          })
+        Chain.event(Mint(account, value))
+
+	
+
