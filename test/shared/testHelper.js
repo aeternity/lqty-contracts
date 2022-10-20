@@ -77,6 +77,10 @@ const testHelper =  {
 	return issuedDebt
     },
 
+    assertIsApproximatelyEqual: function (x, y, error = 1000) {
+	assert.isAtMost(this.getDifference(x, y), error)
+    },
+
     getEventArgByIndex: function(tx, eventName, argIndex) {
 	for (let i = 0; i < tx.decodedEvents.length; i++) {
 	    if (tx.decodedEvents[i].name === eventName) {
@@ -85,6 +89,15 @@ const testHelper =  {
 	}
 	throw (`The transaction logs do not contain event ${eventName}`)
     },
+
+    getAEUSDFeeFromAEUSDBorrowingEvent: function(tx) {
+	for (let i = 0; i < tx.decodedEvents.length; i++) {
+	    if (tx.decodedEvents[i].name === "AEUSDBorrowingFeePaid") {
+		return (tx.decodedEvents[i].args[1]).toString()
+	    }
+	}
+	throw ("The transaction logs do not contain an LUSDBorrowingFeePaid event")
+    },    
 
     // getLatestBlockTimestamp: function(sdk) {
     // 	// const blockNumber = await web3Instance.eth.getBlockNumber()
@@ -185,6 +198,10 @@ const testHelper =  {
 	return (contracts.troveManager.get_trove_stake(trove))
     },
 
+    convertContractAddress: function(address) {
+	return address.replace("ct_", "ak_")
+    },
+
     // --- Assert functions ---
 
     assertRevert : async function (txPromise, message = undefined) {
@@ -194,13 +211,18 @@ const testHelper =  {
 	} catch (err) {
 	    // console.log("tx failed")
 	    assert.include(err.message, message)
-	    // TODO !!!
-	    
-	    // if (message) {
-	    //   assert.include(err.message, message)
-	    // }
 	}
-    },    
+    },
+
+    assertRevertOpenTrove : async function (txPromise, message = undefined) {
+	try {
+	    const tx = await txPromise
+	    assert.notEqual(tx.tx.result.returnType, 'ok');
+	} catch (err) {
+	    // console.log("tx failed")
+	    assert.include(err.message, message)
+	}
+    },        
 
 }
 const makeBN = ( num, precision ) => {

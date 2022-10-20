@@ -160,6 +160,10 @@ contract LQTYStaking =
       put( state { f_aeusd @ f = SafeMath.add(f, aeusd_fee_per_lqty_staked) })
       Chain.event(F_AEUSDUpdated(state.f_aeusd))
 
+    // --- getters ---
+
+    entrypoint f_aeusd() = state.f_aeusd
+    
     // --- Pending reward functions ---
 
     entrypoint get_pending_ae_gain(user: address) : int =

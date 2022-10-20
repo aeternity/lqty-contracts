@@ -60,7 +60,8 @@ describe( 'Borrower Operations', () => {
                 await deployContract( './test/contracts/TimeOffsetForDebug.aes', )
             )
 
-            await contracts.troveManager.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )	    
+            await contracts.troveManager.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )
+	    await LQTYContracts.lqtyToken.set_timestamp_offset_for_debug( timeOffsetForDebugger.address )	    
 
             //connect contracts
             console.log( "connecting contracts" )
@@ -100,7 +101,7 @@ describe( 'Borrower Operations', () => {
         //     expect( name ).to.eq( 'BorrowerOperations' )
         // } )
 
-	// // --- addColl() ---
+	// --- addColl() ---
 
 	// it("addColl(): reverts when top-up would leave trove with ICR < MCR", async () => {
 	//     // alice creates a Trove and adds first collateral
@@ -491,37 +492,226 @@ describe( 'Borrower Operations', () => {
 
 	it("openTrove(): borrowing at non-zero base rate sends LUSD fee to LQTY staking contract", async () => {
 	    // time fast-forwards 1 year, and multisig stakes 1 LQTY
-	    await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)	    
-	    await LQTYContracts.lqtyToken.create_allowance(LQTYContracts.lqtyStaking.address, testHelper.dec(1, 18), { onAccount: multisig })
-	    //await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
+	    await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
+	    const lqtyStakingAddress = LQTYContracts.lqtyStaking.address
+	    const lqtyStakingAccountAddress = lqtyStakingAddress.replace("ct_", "ak_");	    
+	    await LQTYContracts.lqtyToken.create_allowance(lqtyStakingAccountAddress, testHelper.dec(1, 18), { onAccount: multisig })
+	    await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
 
-	    // // Check LQTY LUSD balance before == 0
-	    // const lqtyStaking_LUSDBalance_Before = await lusdToken.balanceOf(lqtyStaking.address)
-	    // assert.equal(lqtyStaking_LUSDBalance_Before, '0')
+	    // Check LQTY LUSD balance before == 0
+	    const lqtyStaking_aeusd_balance_before = await contracts.aeusdToken.balance(lqtyStakingAccountAddress)
+	    assert.equal(lqtyStaking_aeusd_balance_before, undefined)
 
-	    // await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { onAccount: whale } })
-	    // await openTrove({ extraLUSDAmount: toBN(dec(20000, 18)), ICR: toBN(dec(2, 18)), extraParams: { onAccount: A } })
-	    // await openTrove({ extraLUSDAmount: toBN(dec(30000, 18)), ICR: toBN(dec(2, 18)), extraParams: { onAccount: B } })
-	    // await openTrove({ extraLUSDAmount: toBN(dec(40000, 18)), ICR: toBN(dec(2, 18)), extraParams: { onAccount: C } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(20000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(30000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(40000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: C } })
 
-	    // // Artificially make baseRate 5%
-	    // await troveManager.setBaseRate(dec(5, 16))
-	    // await troveManager.setLastFeeOpTimeToNow()
 
-	    // // Check baseRate is now non-zero
-	    // const baseRate_1 = await troveManager.baseRate()
-	    // assert.isTrue(baseRate_1.gt(toBN('0')))
+	    // Artificially make baseRate 5%
+	    await contracts.troveManager.set_base_rate(testHelper.dec(5, 16))
+	    await contracts.troveManager.set_last_fee_op_time_to_now()
 
-	    // // 2 hours pass
-	    // th.fastForwardTime(7200, web3.currentProvider)
+	    // Check baseRate is now non-zero
+	    const baseRate_1 = await contracts.troveManager.base_rate()
+	    assert.isTrue(baseRate_1 > 0)
 
-	    // // D opens trove 
-	    // await openTrove({ extraLUSDAmount: toBN(dec(40000, 18)), ICR: toBN(dec(2, 18)), extraParams: { onAccount: D } })
+	    // 2 hours pass
+	    await fastForwardTime(7200)
 
-	    // // Check LQTY LUSD balance after has increased
-	    // const lqtyStaking_LUSDBalance_After = await lusdToken.balanceOf(lqtyStaking.address)
-	    // assert.isTrue(lqtyStaking_LUSDBalance_After.gt(lqtyStaking_LUSDBalance_Before))
+	    // D opens trove 
+	    await openTrove({ extraLUSDAmount: testHelper.dec(40000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: D } })
+
+	    // Check LQTY LUSD balance after has increased
+	    const lqtyStaking_aeusd_balance_after = await contracts.aeusdToken.balance(lqtyStakingAccountAddress)
+	    //console.log('aeusd_balance:'+lqtyStaking_aeusd_balance_after)
+	    assert.isTrue(lqtyStaking_aeusd_balance_after > 0)
 	})
 
+	it("openTrove(): borrowing at non-zero base records the (drawn debt + fee  + liq. reserve) on the Trove struct", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
+            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
+
+            await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
+            await openTrove({ extraLUSDAmount: testHelper.dec(20000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+            await openTrove({ extraLUSDAmount: testHelper.dec(30000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+            await openTrove({ extraLUSDAmount: testHelper.dec(40000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: C } })
+
+   	    // Artificially make baseRate 5%
+	    await contracts.troveManager.set_base_rate(testHelper.dec(5, 16))
+	    await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue(baseRate_1 > 0)
+
+            // 2 hours pass
+            await fastForwardTime(7200)
+
+            const D_LUSDRequest = testHelper.dec(20000, 18)
+
+           // D withdraws LUSD
+            const openTroveTx = await contracts.borrowerOperations.original.methods.open_trove(testHelper._100pct, D_LUSDRequest, AAddress, AAddress, { onAccount: D, amount: testHelper.dec(200, 'ae') })
+
+            const emittedFee = BigInt(testHelper.getAEUSDFeeFromAEUSDBorrowingEvent(openTroveTx))
+            assert.isTrue(BigInt(emittedFee) > 0)
+
+            const newDebt = (await contracts.troveManager.troves()).get(DAddress).debt
+
+            // Check debt on Trove struct equals drawn debt plus emitted fee
+            testHelper.assertIsApproximatelyEqual(newDebt, D_LUSDRequest + emittedFee + LUSD_GAS_COMPENSATION, 100000)
+	})
+
+	it("openTrove(): Borrowing at non-zero base rate increases the LQTY staking contract LUSD fees-per-unit-staked", async () => {
+	    // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
+            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
+
+	    // Check LQTY contract LUSD fees-per-unit-staked is zero
+	    const f_aeusd_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+	    assert.equal(f_aeusd_Before, '0')
+
+	    await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(20000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(30000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(40000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: C } })
+
+   	    // Artificially make baseRate 5%
+	    await contracts.troveManager.set_base_rate(testHelper.dec(5, 16))
+	    await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue(baseRate_1 > 0)
+
+	    // 2 hours pass
+	    await fastForwardTime(7200)
+
+	    // D opens trove 
+	    await openTrove({ extraLUSDAmount: testHelper.dec(37, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: D } })
+
+	    // Check LQTY contract LUSD fees-per-unit-staked has increased
+	    const f_aeusd_Afer = await LQTYContracts.lqtyStaking.f_aeusd()	    
+	    assert.isTrue(f_aeusd_Afer > f_aeusd_Before)
+	})
+
+	it("openTrove(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
+	    // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
+            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
+	    
+	    // Check LQTY LUSD balance before == 0
+	    const lqtyStaking_aeusd_balance_before = await contracts.aeusdToken.balance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address))
+	    assert.equal(lqtyStaking_aeusd_balance_before, undefined)
+
+	    await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(20000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(30000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(40000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: C } })
+
+   	    // Artificially make baseRate 5%
+	    await contracts.troveManager.set_base_rate(testHelper.dec(5, 16))
+	    await contracts.troveManager.set_last_fee_op_time_to_now()
+
+	    // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue(baseRate_1 > 0)
+
+	    // 2 hours pass
+	    await fastForwardTime(7200)
+
+	    // D opens trove
+	    const LUSDRequest_D = testHelper.dec(40000, 18)	    
+            const openTroveTx = await contracts.borrowerOperations.original.methods.open_trove(testHelper._100pct, LUSDRequest_D, DAddress, DAddress, { onAccount: D, amount: testHelper.dec(500, 'ae') })
+
+	    // Check LQTY staking LUSD balance has increased
+	    const lqtyStaking_aeusd_balance_after = await contracts.aeusdToken.balance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address))
+	    assert.isTrue(lqtyStaking_aeusd_balance_after > 0)
+
+	    // Check D's LUSD balance now equals their requested LUSD
+	    const LUSDBalance_D = await contracts.aeusdToken.balance(DAddress)
+	    assert.isTrue(LUSDRequest_D == LUSDBalance_D)
+	})
+
+	it("openTrove(): Borrowing at zero base rate changes the LQTY staking contract LUSD fees-per-unit-staked", async () => {
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: C } })
+
+	    // Check baseRate is zero
+	    const baseRate_1 = await contracts.troveManager.base_rate()
+	    assert.equal(baseRate_1, '0')
+
+	    // 2 hours pass
+	    await fastForwardTime(7200)
+
+	    // Check LUSD reward per LQTY staked == 0
+	    const f_aeusd_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+	    assert.equal(f_aeusd_Before, '0')
+
+	    // A stakes LQTY
+	    await LQTYContracts.lqtyToken.unprotected_mint(AAddress, testHelper.dec(100, 18))
+	    await LQTYContracts.lqtyStaking.stake(testHelper.dec(100, 18), { onAccount: A })
+
+	    // D opens trove 
+	    await openTrove({ extraLUSDAmount: testHelper.dec(37, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: D } })
+
+	    // Check LUSD reward per LQTY staked > 0
+	    const F_LUSD_After = await LQTYContracts.lqtyStaking.f_aeusd()
+	    assert.isTrue(F_LUSD_After > 0)
+	})
+
+	it("openTrove(): Borrowing at zero base rate charges minimum fee", async () => {
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: B } })
+
+	    const LUSDRequest = testHelper.dec(10000, 18)
+	    const txC = await contracts.borrowerOperations.original.methods.open_trove(testHelper._100pct, LUSDRequest, CAddress, CAddress, { amount: dec(100, 'ae'), onAccount: C })
+	    const _LUSDFee = testHelper.getEventArgByIndex(txC, "AEUSDBorrowingFeePaid", 1)
+
+	    const expectedFee = BORROWING_FEE_FLOOR * LUSDRequest / testHelper.dec(1, 18)
+	    assert.equal(_LUSDFee, expectedFee)
+	})
+
+	it("openTrove(): reverts when system is in Recovery Mode and ICR < CCR", async () => {
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: alice } })
+	    assert.isFalse(await testHelper.checkRecoveryMode(contracts))
+
+	    // price drops, and Recovery Mode kicks in
+	    await contracts.priceFeedTestnet.set_price(testHelper.dec(105, 18))
+
+	    assert.isTrue(await testHelper.checkRecoveryMode(contracts))
+
+	    // Bob tries to open a trove with 149% ICR during Recovery Mode
+	    const txPromise = openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(149, 16), extraParams: { onAccount: bob } })	    
+	    await testHelper.assertRevertOpenTrove(txPromise, "BorrowerOps: Operation must leave trove with ICR >= CCR")
+	})	
+
+	// test number 20 !
+	it("openTrove(): reverts when trove ICR < MCR", async () => {
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: A } })
+	    await openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(2, 18), extraParams: { onAccount: alice } })
+
+	    assert.isFalse(await testHelper.checkRecoveryMode(contracts))
+
+	    // Bob attempts to open a 109% ICR trove in Normal Mode
+	    const txPromise = openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(109, 16), extraParams: { onAccount: bob } })
+	    await testHelper.assertRevertOpenTrove(txPromise, "BorrowerOps: An operation that would result in ICR < MCR is not permitted")
+
+	    // price drops, and Recovery Mode kicks in
+	    await contracts.priceFeedTestnet.set_price(testHelper.dec(105, 18))
+
+	    assert.isTrue(await testHelper.checkRecoveryMode(contracts))
+
+	    // Bob attempts to open a 109% ICR trove in Recovery Mode
+	    const txPromise2 = openTrove({ extraLUSDAmount: testHelper.dec(5000, 18), ICR: testHelper.dec(109, 16), extraParams: { onAccount: bob } })
+	    await testHelper.assertRevertOpenTrove(txPromise2, "BorrowerOps: Operation must leave trove with ICR >= CCR")	    
+	})
+	
     } )
 } )

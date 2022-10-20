@@ -328,6 +328,8 @@ contract TroveManager =
     // DATA GETTERS
     //------------------------------------------------------------------------------
 
+    entrypoint troves() = state.troves
+
     entrypoint get_trove_owners_count() = List.length(state.trove_owners)
 
     entrypoint get_trove_from_trove_owners_array(index: int): option(address) =
