@@ -15,7 +15,7 @@ include "./dependencies/Utils.aes"
  * from the Default Pool to the Active Pool.
  */
 
-contract DefaultPool =
+payable contract DefaultPool =
     //------------------------------------------------------------------------------
     // DATA & STATE
     //------------------------------------------------------------------------------
@@ -29,7 +29,7 @@ contract DefaultPool =
           owner: option(address)
         , addresses: option(addresses)
 	, ae: int
-	, ausd_debt: int
+	, aeusd_debt: int
         }
 
     entrypoint init() =
@@ -37,7 +37,7 @@ contract DefaultPool =
         {  owner = Some(Call.caller)
          , addresses = None
 	 , ae = 0
-	 , ausd_debt = 0
+	 , aeusd_debt = 0
          }
 
     stateful entrypoint set_addresses(addresses: addresses) =
@@ -59,7 +59,7 @@ contract DefaultPool =
     * Not necessarily equal to the the contract's raw AE balance - ae can be forcibly sent to contracts.
     */
     entrypoint get_ae(): int = state.ae
-    entrypoint get_aeusd_debt(): int = state.ausd_debt
+    entrypoint get_aeusd_debt(): int = state.aeusd_debt
 
     // --- Pool functionality ---
 
@@ -72,19 +72,19 @@ contract DefaultPool =
       	Chain.spend(addresses.active_pool.address, amount)
       )
 
-    stateful entrypoint increse_ausd_debt(amount: int) =
+    stateful entrypoint increase_aeusd_debt(amount: int) =
       // requirement
       require_caller_is_trove_manager()
-      let ausd_debt = SafeMath.add(state.ausd_debt, amount)
-      put( state { ausd_debt = ausd_debt } )
-      Chain.event(DefaultPoolAEUSDDebtUpdated(ausd_debt))
-
-    stateful entrypoint decrease_ausd_debt(amount: int) =
+      let aeusd_debt = SafeMath.add(state.aeusd_debt, amount)
+      put( state { aeusd_debt = aeusd_debt } )
+      Chain.event(DefaultPoolAEUSDDebtUpdated(aeusd_debt))
+                        
+    stateful entrypoint decrease_aeusd_debt(amount: int) =
       // requirement
       require_caller_is_trove_manager()
-      let ausd_debt = SafeMath.sub(state.ausd_debt, amount)
-      put( state { ausd_debt = ausd_debt } )
-      Chain.event(DefaultPoolAEUSDDebtUpdated(ausd_debt))
+      let aeusd_debt = SafeMath.sub(state.aeusd_debt, amount)
+      put( state { aeusd_debt = aeusd_debt } )
+      Chain.event(DefaultPoolAEUSDDebtUpdated(aeusd_debt))
 
     payable stateful entrypoint receive_ae() =
         require_caller_is_active_pool()
@@ -112,7 +112,7 @@ contract DefaultPool =
     datatype event
         = TroveManagerAddressChanged(ITroveManager /*_newTroveManagerAddress*/)
         | ActivePoolAddressChanged(IActivePool /*_activePoolAddress*/)
-        | DefaultPoolAEUSDDebtUpdated(int /*ausd_debt*/)
+        | DefaultPoolAEUSDDebtUpdated(int /*aeusd_debt*/)
         | DefaultPoolAEBalanceUpdated(int /*ae*/)
 	| AESent(IActivePool /*account*/, int /*amount*/)
 //#inject "./dependencies/Ownable.events.aes"

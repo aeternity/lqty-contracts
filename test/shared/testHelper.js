@@ -68,7 +68,12 @@ const testHelper =  {
     checkRecoveryMode: async function (contracts) {
 	const price = await contracts.priceFeedTestnet.get_price()
 	return contracts.troveManager.check_recovery_mode(price)
-    },	
+    },
+
+    getTCR: async function (contracts) {
+	const price = await contracts.priceFeedTestnet.get_price()
+	return contracts.troveManager.get_tcr(price)
+    },    
 
     // Given a composite debt, returns the actual debt  - i.e. subtracts the virtual debt.
     // Virtual debt = 50 LUSD.
@@ -99,6 +104,20 @@ const testHelper =  {
 	throw ("The transaction logs do not contain an LUSDBorrowingFeePaid event")
     },    
 
+    getEmittedLiquidationValues: function(liquidationTx) {
+	for (let i = 0; i < liquidationTx.decodedEvents.length; i++) {
+	    if (liquidationTx.decodedEvents[i].name === "Liquidation") {
+		const liquidatedDebt = liquidationTx.decodedEvents[i].args[0]
+		const liquidatedColl = liquidationTx.decodedEvents[i].args[1]
+		const collGasComp = liquidationTx.decodedEvents[i].args[2]
+		const lusdGasComp = liquidationTx.decodedEvents[i].args[3]
+		
+		return [liquidatedDebt, liquidatedColl, collGasComp, lusdGasComp]
+	    }
+	}
+	throw ("The transaction decodedEvents do not contain a liquidation event")
+    },    
+    
     // getLatestBlockTimestamp: function(sdk) {
     // 	// const blockNumber = await web3Instance.eth.getBlockNumber()
     // 	// const block = await web3Instance.eth.getBlock(blockNumber)

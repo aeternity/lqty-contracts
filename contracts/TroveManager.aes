@@ -330,7 +330,15 @@ contract TroveManager =
 
     entrypoint troves() = state.troves
 
+    entrypoint total_stakes() = state.total_stakes
+
+    entrypoint l_ae() = state.l_ae
+
+    entrypoint l_aeusd_debt() = state.l_aeusd_debt
+
     entrypoint get_trove_owners_count() = List.length(state.trove_owners)
+
+    entrypoint reward_snapshots(borrower: address) = Map.lookup_default(borrower,state.reward_snapshots,null_reward_snapshot())
 
     entrypoint get_trove_from_trove_owners_array(index: int): option(address) =
       List.nth(index,state.trove_owners)
@@ -344,6 +352,31 @@ contract TroveManager =
     stateful entrypoint liquidate(borrower: address) =
         require_trove_is_active(borrower)
         batch_liquidate_troves([borrower])
+
+    stateful entrypoint batch_liquidate_troves_aux(trove_array: list(address)) = with_addresses((addresses) =>
+        require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
+
+        let active_pool = addresses.active_pool
+        let default_pool = addresses.default_pool
+        let stability_pool = addresses.stability_pool
+
+        let price = addresses.price_feed.fetch_price()
+        let aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
+        let recovery_mode_at_start = check_recovery_mode'(price)
+
+	require(recovery_mode_at_start, "no esta en recovery mode")
+
+        // Perform the appropriate liquidation sequence - tally values and obtain their totals.
+        let totals =
+          if (recovery_mode_at_start)
+            get_total_from_batch_liquidate_recovery_mode( active_pool, default_pool, price
+                                                        , aeusd_in_stab_pool, trove_array )
+          else
+            get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, price
+                                                       , aeusd_in_stab_pool, trove_array )
+						       
+	totals
+      )		
 
     stateful function batch_liquidate_troves(trove_array: list(address)) = with_addresses((addresses) =>
         require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
@@ -374,7 +407,7 @@ contract TroveManager =
           , default_pool
           , totals.total_debt_to_redistribute
           , totals.total_coll_to_redistribute
-          )
+          ) 
         if (totals.total_coll_surplus > 0)
             active_pool.send_ae(addresses.coll_surplus_pool.address, totals.total_coll_surplus)
 
@@ -435,9 +468,8 @@ contract TroveManager =
       total_rec_mode_loop(totals,vars,apool,dpool,price,aeusd_in_stab_pool,h::hs) | state.troves[h].status != Active =
         total_rec_mode_loop(totals, vars, apool,dpool,price,aeusd_in_stab_pool,hs)
       total_rec_mode_loop(totals,vars,apool,dpool,price,aeusd_in_stab_pool,h::hs) =
-
         let vars = vars { icr = get_current_icr(h,price) }
-        if(vars.back_to_normal_mode)
+        if(!vars.back_to_normal_mode)
           // Skip this trove if ICR is greater than MCR and Stability Pool is empty
           if (vars.icr >= mcr() && vars.remaining_aeusd_in_stab_pool == 0)
             total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
@@ -462,8 +494,9 @@ contract TroveManager =
             // Add liquidation values to their respective running totals
             let totals = add_liquidation_values_to_totals(totals, single_liquidation)
             let vars = vars {
-              back_to_normal_mode = !check_potential_recovery_mode(vars.entire_system_coll, vars.entire_system_debt, price)
+              	back_to_normal_mode = !check_potential_recovery_mode(vars.entire_system_coll, vars.entire_system_debt, price)
               }
+
             total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
         else
           if (vars.back_to_normal_mode && vars.icr < mcr())
@@ -474,7 +507,8 @@ contract TroveManager =
             let totals = add_liquidation_values_to_totals(totals, single_liquidation)
             total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
           // In Normal Mode skip troves with ICR >= MCR
-          else total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
+          else
+	    total_rec_mode_loop(totals, vars,apool,dpool,price,aeusd_in_stab_pool,hs)
 
     stateful function get_totals_from_batch_liquidate_normal_mode (
         active_pool: IActivePool
@@ -766,7 +800,7 @@ contract TroveManager =
                   , addresses )
             else totals // break if the loop reaches a Trove with ICR >= MCR*/
 
-    // Liquidate one trove, in Recovery Mode.
+    // Liquidate one trove, in Recovery Mode. 
     stateful function
       liquidate_recovery_mode: (
           /*activePool:*/ IActivePool
@@ -789,6 +823,8 @@ contract TroveManager =
             , coll_gas_compensation = get_coll_gas_compensation'(entire_trove_coll)
             , aeusd_gas_compensation = aeusd_gas_compensation()
             }
+
+
           let coll_to_liquidate = SafeMath.sub(single_liquidation.entire_trove_coll,single_liquidation.coll_gas_compensation)
           // If ICR <= 100%, purely redistribute the Trove across all active Troves
           if(icr =< pct_100())
@@ -984,7 +1020,7 @@ contract TroveManager =
       let pending_aeusd_debt_reward = get_pending_aeusd_debt_reward(borrower)
       let pending_ae_reward = get_pending_ae_reward(borrower)
 
-      let trove = state.troves[borrower]
+      let trove = Map.lookup_default(borrower, state.troves, null_trove())
       let debt = trove.debt +  pending_aeusd_debt_reward
       let coll = trove.coll + pending_ae_reward
 
@@ -1467,13 +1503,13 @@ contract TroveManager =
         status_to_int(Map.lookup_default(borrower,state.troves,null_trove()).status)
 
     entrypoint get_trove_stake(borrower: address): int =
-        state.troves[borrower].stake
+        (Map.lookup_default(borrower,state.troves,null_trove())).stake
 
     entrypoint get_trove_debt(borrower: address): int =
-        state.troves[borrower].debt
+        (Map.lookup_default(borrower,state.troves,null_trove())).debt
 
     entrypoint get_trove_coll(borrower: address): int =
-        state.troves[borrower].coll
+        (Map.lookup_default(borrower,state.troves,null_trove())).coll
 
     entrypoint get_last_fee_operation_time(): int =
     	state.last_fee_operation_time  
@@ -1495,6 +1531,7 @@ contract TroveManager =
       , status = NonExistent
       , array_index = -1
       }
+      
     function require_trove_is_active(borrower: address) = require(
         Map.lookup_default(borrower,state.troves,null_trove()).status == Active,
         "TroveManager: Trove does not exist or is closed"
@@ -1695,7 +1732,7 @@ contract TroveManager =
         LiquityMath.compute_nominal_cr(current_ae, current_aeusd_debt)
 
     // Return the current collateral ratio (ICR) of a given Trove. Takes a trove's pending coll and debt rewards from redistributions into account.
-    entrypoint get_current_icr(borrower: address, price: int) =
+    entrypoint get_current_icr(borrower: address, price: int): int =
         let (current_ae, current_aeusd_debt) = get_current_trove_amounts(borrower)
         LiquityMath.compute_cr(current_ae, current_aeusd_debt, price)
 
@@ -1703,7 +1740,7 @@ contract TroveManager =
         let pending_ae_reward = get_pending_ae_reward(borrower)
         let pending_aeusd_debt_reward = get_pending_aeusd_debt_reward(borrower)
 
-        let trove = state.troves[borrower]
+        let trove = Map.lookup_default(borrower, state.troves, null_trove())
         let current_ae = trove.coll + pending_ae_reward
         let current_aeusd_debt = trove.debt + pending_aeusd_debt_reward
 
@@ -1711,19 +1748,19 @@ contract TroveManager =
 
     // Get the borrower's pending accumulated AE reward, earned by their stake
     function get_pending_ae_reward(borrower: address): int =
-        let snapshot_ae = state.reward_snapshots[borrower].ae
+        let snapshot_ae = (Map.lookup_default(borrower, state.reward_snapshots, null_reward_snapshot())).ae
         let reward_per_unit_staked = SafeMath.sub(state.l_ae,snapshot_ae)
 
-        let trove = state.troves[borrower]
+        let trove = Map.lookup_default(borrower, state.troves, null_trove())
         if ( reward_per_unit_staked == 0 || trove.status != Active) 0
         else SafeMath.div(trove.stake * reward_per_unit_staked,Utils.decimal_precision())
 
     // Get the borrower's pending accumulated AEUSD reward, earned by their stake
     function get_pending_aeusd_debt_reward(borrower: address) =
-        let snapshot_aeusd_debt = state.reward_snapshots[borrower].aeusd_debt
+        let snapshot_aeusd_debt = Map.lookup_default(borrower, state.reward_snapshots, null_reward_snapshot()).aeusd_debt
         let reward_per_unit_staked = SafeMath.sub(state.l_aeusd_debt,snapshot_aeusd_debt)
 
-        let trove = state.troves[borrower]
+        let trove = Map.lookup_default(borrower, state.troves, null_trove())
         if ( reward_per_unit_staked == 0 || trove.status != Active) 0
         else SafeMath.div(trove.stake * reward_per_unit_staked,Utils.decimal_precision())
 

@@ -542,7 +542,7 @@ contract BorrowerOperations =
         require(aeusd_change > 0, "BorrowerOps: Debt increase requires non-zero debtChange")
 
     function require_not_in_recovery_mode(price: int) =
-        require(check_recovery_mode'(price), "BorrowerOps: Operation not permitted during Recovery Mode")
+        require(! check_recovery_mode'(price), "BorrowerOps: Operation not permitted during Recovery Mode")
 
     function require_no_coll_withdrawal(coll_withdrawal: int) =
         require(coll_withdrawal == 0, "BorrowerOps: Collateral withdrawal not permitted Recovery Mode")
