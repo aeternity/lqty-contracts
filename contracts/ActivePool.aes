@@ -15,7 +15,7 @@ include "./dependencies/Utils.aes"
  * Stability Pool, the Default Pool, or both, depending on the liquidation conditions.
  *
  */
-contract ActivePool =
+payable contract ActivePool =
     record addresses = {
           borrower_operations: IBorrowerOperations
         , trove_manager: ITroveManager
