@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 
+include "Option.aes"
 include "./interfaces/IAEUSDToken.aes"
 include "./dependencies/SafeMath.aes"
 
 include "./interfaces/ITroveManager.aes"
 include "./interfaces/IStabilityPool.aes"
 include "./interfaces/IBorrowerOperations.aes"
+include "./interfaces/ITimestampOffsetForDebug.aes"
 
 /*
 *
@@ -36,6 +38,8 @@ contract AEUSDToken =
         , trove_manager: ITroveManager
         , stability_pool: IStabilityPool
         , borrower_operations: IBorrowerOperations
+	//NOTE: don't use this for production deployment	
+      	, timestamp_offset_for_debug: option(ITimestampOffsetForDebug)	
         }
 
     // This is the format of allowance record type that will be used in the state
@@ -75,6 +79,7 @@ contract AEUSDToken =
          , trove_manager = trove_manager
          , stability_pool = stability_pool
          , borrower_operations = borrower_operations
+	 , timestamp_offset_for_debug = None       	 
          }
 
     // Get the token meta info
@@ -135,6 +140,7 @@ contract AEUSDToken =
     // Otherwise Some(int) is returned with the allowance amount
     entrypoint allowance_for_caller(from_account: address) : option(int) =
         allowance({ from_account = from_account, for_account = Call.caller })
+
     // Create allowance for `for_account` to withdraw from your account `Call.caller`,
     // multiple times, up to the `value` amount.
     // This function will abort and fail if called again when there is allowance
@@ -155,7 +161,9 @@ contract AEUSDToken =
     // Allows to change the allowed spendable value for `for_account` with `value_change`
     stateful entrypoint change_allowance(for_account: address, value_change: int) =
         let allowance_accounts = { from_account =  Call.caller, for_account = for_account }
-        internal_change_allowance(allowance_accounts, value_change)
+      	switch(allowance(allowance_accounts))
+		None    => create_allowance(for_account, value_change)
+		Some(_) => internal_change_allowance(allowance_accounts, value_change)
 
     // Resets the allowance given `for_account` to zero.
     stateful entrypoint reset_allowance(for_account: address) =
@@ -225,3 +233,8 @@ contract AEUSDToken =
     // EXTENTIONS
     //------------------------------------------------------------------------------
 //#inject "./dependencies/AEX9.functions.aes"
+//#inject "./dependencies/Timestamp.function.aes"
+
+//This should be available just for debug/tests
+//#inject-debug "../test/contracts/TimestampOffsetSetter.tester.aes"
+//#inject-debug "../test/contracts/LQTYToken.tester.aes"

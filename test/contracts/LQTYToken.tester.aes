@@ -8,5 +8,23 @@
           })
         Chain.event(Mint(account, value))
 
+    stateful entrypoint  unprotected_burn(account: address, value: int ) =
+        // No check for the caller here
+
+        put(state
+          { total_supply = state.total_supply - value
+          , balances[account = 0] @ b = b - value
+          })
+	// should be: -value problem with negative numbers !!!!!
+        Chain.event(Mint(account, value))
+
+    stateful entrypoint unprotected_send_to_pool(sender: address,  pool_address: address, value: int) =
+        internal_transfer(sender, pool_address, value)
+
+    stateful entrypoint unprotected_return_from_pool(pool_address: address, receiver: address, value: int) =
+        internal_transfer(pool_address, receiver, value)
+
+
+
 	
 
