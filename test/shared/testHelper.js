@@ -217,9 +217,10 @@ const testHelper =  {
 	return (contracts.troveManager.get_trove_stake(trove))
     },
 
-    convertContractAddress: function(address) {
-	return address.replace("ct_", "ak_")
-    },
+    // use contract wrapper's accountAddress field
+    // convertContractAddress: function(address) {
+    // 	return address.replace("ct_", "ak_")
+    // },
 
     // --- Assert functions ---
 

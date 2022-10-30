@@ -486,7 +486,7 @@ describe( 'Borrower Operations', () => {
 	it("openTrove(): borrowing at non-zero base records the (drawn debt + fee  + liq. reserve) on the Trove struct", async () => {
             // time fast-forwards 1 year, and multisig stakes 1 LQTY
             await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
-            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyToken.create_allowance(LQTYContracts.lqtyStaking.accountAddress, testHelper.dec(1, 18), { onAccount: multisig })
             await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
 
             await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
@@ -522,7 +522,7 @@ describe( 'Borrower Operations', () => {
 	it("openTrove(): Borrowing at non-zero base rate increases the LQTY staking contract LUSD fees-per-unit-staked", async () => {
 	    // time fast-forwards 1 year, and multisig stakes 1 LQTY
             await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
-            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyToken.create_allowance(LQTYContracts.lqtyStaking.accountAddress, testHelper.dec(1, 18), { onAccount: multisig })
             await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
 
 	    // Check LQTY contract LUSD fees-per-unit-staked is zero
@@ -556,11 +556,11 @@ describe( 'Borrower Operations', () => {
 	it("openTrove(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
 	    // time fast-forwards 1 year, and multisig stakes 1 LQTY
             await fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR)
-            await LQTYContracts.lqtyToken.create_allowance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address), testHelper.dec(1, 18), { onAccount: multisig })
+            await LQTYContracts.lqtyToken.create_allowance(LQTYContracts.lqtyStaking.accountAddress, testHelper.dec(1, 18), { onAccount: multisig })
             await LQTYContracts.lqtyStaking.stake(testHelper.dec(1, 18), { onAccount: multisig })
 	    
 	    // Check LQTY LUSD balance before == 0
-	    const lqtyStaking_aeusd_balance_before = await contracts.aeusdToken.balance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address))
+	    const lqtyStaking_aeusd_balance_before = await contracts.aeusdToken.balance(LQTYContracts.lqtyStaking.accountAddress)
 	    assert.equal(lqtyStaking_aeusd_balance_before, undefined)
 
 	    await openTrove({ extraLUSDAmount: testHelper.dec(10000, 18), ICR: testHelper.dec(10, 18), extraParams: { onAccount: alice } })
@@ -584,7 +584,7 @@ describe( 'Borrower Operations', () => {
             const openTroveTx = await contracts.borrowerOperations.original.methods.open_trove(testHelper._100pct, LUSDRequest_D, DAddress, DAddress, { onAccount: D, amount: testHelper.dec(500, 'ae') })
 
 	    // Check LQTY staking LUSD balance has increased
-	    const lqtyStaking_aeusd_balance_after = await contracts.aeusdToken.balance(testHelper.convertContractAddress(LQTYContracts.lqtyStaking.address))
+	    const lqtyStaking_aeusd_balance_after = await contracts.aeusdToken.balance(LQTYContracts.lqtyStaking.accountAddress)
 	    assert.isTrue(lqtyStaking_aeusd_balance_after > 0)
 
 	    // Check D's LUSD balance now equals their requested LUSD
