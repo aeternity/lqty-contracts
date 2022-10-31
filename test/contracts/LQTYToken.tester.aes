@@ -6,6 +6,7 @@
           { total_supply = state.total_supply + value
           , balances[account = 0] @ b = b + value
           })
+	// TODO: problem with negative numbers !!!! REQUIRE value > 0 !!
         Chain.event(Mint(account, value))
 
     stateful entrypoint  unprotected_burn(account: address, value: int ) =
@@ -15,8 +16,8 @@
           { total_supply = state.total_supply - value
           , balances[account = 0] @ b = b - value
           })
-	// should be: -value problem with negative numbers !!!!!
-        Chain.event(Mint(account, value))
+
+	Chain.event(Burn(account, value))	
 
     stateful entrypoint unprotected_send_to_pool(sender: address,  pool_address: address, value: int) =
         internal_transfer(sender, pool_address, value)

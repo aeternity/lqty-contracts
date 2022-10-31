@@ -184,14 +184,14 @@ contract LQTYToken =
       internal_transfer(sender, recipient, amount)
       internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
 
-    stateful entrypoint change_allowance(sender: address,  recipient: address, amount: int) : unit =
+    stateful entrypoint change_allowance(for_account: address, value_change: int) : unit =
       if (is_first_year())
       	 require_caller_is_not_multisig()
 
-      require_valid_recipient(recipient)
-
-      internal_transfer(sender, recipient, amount)
-      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
+      let allowance_accounts = { from_account =  Call.caller, for_account = for_account }
+      switch(allowance(allowance_accounts))
+	None    => create_allowance(for_account, value_change)
+	Some(_) => internal_change_allowance(allowance_accounts, value_change)
 
     // Resets the allowance given `for_account` to zero.
     stateful entrypoint reset_allowance(for_account: address) =
