@@ -202,7 +202,7 @@ describe( 'AEUSD Token', () => {
             assert.equal(alice_balanceBefore, 150)
 
 	    // TODO: problem with negative numbers
-	    // await contracts.aeusdToken.unprotected_mint(aliceAddress, - BigInt(70))	    
+	    //await contracts.aeusdToken.unprotected_mint(aliceAddress, - 70)	    
 	    await contracts.aeusdToken.unprotected_burn(aliceAddress, 70)
 
             const alice_BalanceAfter = await contracts.aeusdToken.balance(aliceAddress)	    
