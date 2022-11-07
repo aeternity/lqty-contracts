@@ -10,7 +10,8 @@ contract interface IActivePool =
 
     // --- Functions ---
     stateful entrypoint send_ae: (address /*_account*/, int /*_amount*/) => unit
-
+    stateful entrypoint send_ae_default_pool: (int /*_amount*/) => unit
+    
     payable entrypoint receive_ae: () => unit
     payable stateful entrypoint deposit_to: (address) => unit
 

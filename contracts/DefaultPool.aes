@@ -65,8 +65,8 @@ payable contract DefaultPool =
 
     stateful entrypoint send_ae_to_active_pool(amount: int) = with_addresses((addresses) =>
         require_caller_is_trove_manager()
-        let ae = SafeMath.sub(state.ae, amount)
-        Chain.event(DefaultPoolAEBalanceUpdated(ae))
+	put( state { ae @ p = SafeMath.sub(p, amount) } )
+        Chain.event(DefaultPoolAEBalanceUpdated(state.ae))
         Chain.event(AESent(addresses.active_pool, amount))
 
       	Chain.spend(addresses.active_pool.address, amount)

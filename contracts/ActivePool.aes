@@ -70,6 +70,19 @@ payable contract ActivePool =
 
         Chain.spend(account,amount)
 
+    stateful entrypoint send_ae_default_pool(amount: int) = with_addresses( (addresses) =>
+             //ensure the rights to send ae
+	     require_caller_is_bo_or_trovem_or_sp()
+
+	     let ae = SafeMath.sub(state.ae, amount)
+	     put(state{ ae = ae })
+
+	     Chain.event( ActivePoolAEBalanceUpdated(ae))
+	     Chain.event(AeSent(addresses.default_pool.address, amount))
+
+	     addresses.default_pool.receive_ae( value = amount )
+    	 )
+
     stateful entrypoint increase_aeusd_debt(amount: int) =
         require_caller_is_bo_or_trovem()
         let aeusd_debt  = SafeMath.add(state.aeusd_debt,amount)
