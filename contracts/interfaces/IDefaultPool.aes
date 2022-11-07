@@ -9,5 +9,6 @@ contract interface IDefaultPool =
 
     // --- Functions ---
     stateful entrypoint send_ae_to_active_pool: (int /*uint amount*/) => unit
+    payable entrypoint receive_ae: () => unit
 
 //#inject "./IPool.functions.aes"

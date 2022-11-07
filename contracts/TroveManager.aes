@@ -364,8 +364,6 @@ contract TroveManager =
         let aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
         let recovery_mode_at_start = check_recovery_mode'(price)
 
-	require(recovery_mode_at_start, "no esta en recovery mode")
-
         // Perform the appropriate liquidation sequence - tally values and obtain their totals.
         let totals =
           if (recovery_mode_at_start)
@@ -966,7 +964,9 @@ contract TroveManager =
         // Transfer coll and debt from ActivePool to DefaultPool
         active_pool.decrease_aeusd_debt(debt)
         default_pool.increase_aeusd_debt(debt)
-        active_pool.send_ae(default_pool.address, coll)
+        // TODO: check this solution, before was: active_pool.send_ae(default_pool.address, coll) but this do not updated default pool ae state beacause lack of default receive entrypoint as Solidity
+	active_pool.send_ae_default_pool(coll)
+
 
     function send_gas_compensation(active_pool: IActivePool, liquidator: address, aeusd: int, ae: int) = with_addresses((addresses) =>
         if (aeusd > 0)
@@ -1747,7 +1747,7 @@ contract TroveManager =
         (current_ae, current_aeusd_debt)
 
     // Get the borrower's pending accumulated AE reward, earned by their stake
-    function get_pending_ae_reward(borrower: address): int =
+    entrypoint get_pending_ae_reward(borrower: address): int =
         let snapshot_ae = (Map.lookup_default(borrower, state.reward_snapshots, null_reward_snapshot())).ae
         let reward_per_unit_staked = SafeMath.sub(state.l_ae,snapshot_ae)
 
@@ -1756,7 +1756,7 @@ contract TroveManager =
         else SafeMath.div(trove.stake * reward_per_unit_staked,Utils.decimal_precision())
 
     // Get the borrower's pending accumulated AEUSD reward, earned by their stake
-    function get_pending_aeusd_debt_reward(borrower: address) =
+    entrypoint get_pending_aeusd_debt_reward(borrower: address) =
         let snapshot_aeusd_debt = Map.lookup_default(borrower, state.reward_snapshots, null_reward_snapshot()).aeusd_debt
         let reward_per_unit_staked = SafeMath.sub(state.l_aeusd_debt,snapshot_aeusd_debt)
 

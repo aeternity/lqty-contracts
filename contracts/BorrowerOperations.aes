@@ -324,8 +324,11 @@ contract BorrowerOperations =
 
             let vars = vars { debt = addresses.trove_manager.get_trove_debt(borrower)
                             , coll = addresses.trove_manager.get_trove_coll(borrower)
+                            }
+
+            let vars = vars { 
                             // Get the trove's old ICR before the adjustment, and what its new ICR will be after the adjustment
-                            , old_icr = LiquityMath.compute_cr(vars.coll, vars.debt, vars.price)
+                              old_icr = LiquityMath.compute_cr(vars.coll, vars.debt, vars.price)
                             , new_icr = get_new_icr_from_trove_change( vars.coll
                                                                      , vars.debt
                                                                      , vars.coll_change
@@ -336,7 +339,7 @@ contract BorrowerOperations =
                             }
 
             require(coll_withdrawal =< vars.coll, "BorrowerOps: withdrawal should be less or equal with collateral")
-
+	    
             // Check the adjustment satisfies all conditions for the current system mode
             let vars = get_valid_adjustment_in_current_mode(is_recovery_mode, coll_withdrawal, is_debt_increase, vars)
 
@@ -533,7 +536,7 @@ contract BorrowerOperations =
 
     function require_trove_is_active(trove_manager: ITroveManager, borrower: address) =
         require(trove_manager.get_trove_status(borrower) == 1,
-            "BorrowerOps: Trove does not exist or is c losed")
+            "BorrowerOps: Trove does not exist or is closed")
 
     function require_trove_is_not_active(trove_manager: ITroveManager,borrower: address) =
         require(trove_manager.get_trove_status(borrower) != 1, "BorrowerOps: Trove is active")
@@ -648,9 +651,17 @@ contract BorrowerOperations =
         , debt_change: int
         , is_debt_increase: bool ): (int*int) =
         let new_debt = debt
-
-        let new_coll = if (is_coll_increase) SafeMath.add(coll,coll_change) else SafeMath.sub(coll,coll_change)
-        let new_debt = if (is_debt_increase) SafeMath.add(debt,debt_change) else SafeMath.sub(debt,debt_change)
+	
+        let new_coll =
+	    if (is_coll_increase) SafeMath.add(coll,coll_change)
+	    else
+	      require(coll >= coll_change, "Can not withdraw more coll than the available")  // To avoid too generic errors in sub		       		       
+	      SafeMath.sub(coll,coll_change)
+        let new_debt =
+	    if (is_debt_increase) SafeMath.add(debt,debt_change)
+	    else
+	      require(debt >= debt_change, "Can not reduce the debt more than the existent")		       
+	      SafeMath.sub(debt,debt_change)
 
         (new_coll, new_debt)
 
