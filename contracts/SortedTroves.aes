@@ -33,7 +33,6 @@ contract SortedTroves =
     record state = {
           owner: option(address)
         , addresses: option(addresses)
-        , size: int
         , data: data
         }
 
@@ -41,7 +40,6 @@ contract SortedTroves =
         Chain.event( OwnershipTransferred(Utils.zero_address(),Call.caller) )
         { owner      = Some(Call.caller)
          , addresses = None
-         , size      = 0
          , data      = {
               head  = None
             , tail  = None
@@ -150,7 +148,7 @@ contract SortedTroves =
 
     stateful function remove'(id: address) =
       require(contains(id), "SortedTroves: List does not contain the id")
-      if(state.size > 1)
+      if(state.data.size > 1)
         // List contains more than a single node
         let head_opt = state.data.head
         if(Some(id) == head_opt)
