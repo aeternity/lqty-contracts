@@ -6,12 +6,13 @@ import { setupDeployment, connectCoreContracts  } from './shared/deploymentHelpe
 import {
     testHelper, timeValues
 } from './shared/testHelper'
-const { dec, getDifference,  } = testHelper
+const { dec, getDifference, assertRevert } = testHelper
 
 import wallets from '../config/wallets.json'
 const accounts = wallets.defaultWallets.map( x => x.publicKey )
 
 describe( 'Borrower Operations', () => {
+    
     describe( 'Borrower Operations Tests ...', () => {
         let contracts
         let LQTYContracts
@@ -397,7 +398,157 @@ describe( 'Borrower Operations', () => {
             assert.isAtMost( testHelper.getDifference( bob_AEUSDDebtRewardSnapshot_After, L_AEUSDDebt ), 100 )
         } )
 
-        // // --- openTrove() ---
+        // --- repayLUSD() ---
+        it( "repayLUSD(): reverts when repayment would leave trove with ICR < MCR", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            // Price drops
+            await contracts.priceFeedTestnet.set_price( testHelper.dec( 100, 18 ) )            
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+            assert.isTrue( ( await contracts.troveManager.get_current_icr( aliceAddress, price ) ) <  dec( 110, 16 ) )
+
+            const AeUSDRepayment = 1  // 1 wei repayment
+
+            const txPromise = contracts.borrowerOperations.original.methods.repay_aeusd( AeUSDRepayment, aliceAddress, aliceAddress, { onAccount: alice } )
+            await assertRevert( txPromise, "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+        } )
+
+        it( "repayLUSD(): Succeeds when it would leave trove with net debt >= minimum net debt", async () => {
+            // Make the LUSD request 2 wei above min net debt to correct for floor division, and make net debt = min net debt + 1 wei
+            await contracts.borrowerOperations.original.methods.open_trove( testHelper._100pct, await getNetBorrowingAmount( MIN_NET_DEBT + BigInt( 2 )  ), AAddress, AAddress, { onAccount: A, amount: dec( 100, 30 ) } )
+
+            const repayTxA = await contracts.borrowerOperations.original.methods.repay_aeusd( 1, AAddress, AAddress, { onAccount: A } )
+            assert.equal( repayTxA.result.returnType, 'ok' )
+
+            await contracts.borrowerOperations.original.methods.open_trove( testHelper._100pct, dec( 20, 25 ), BAddress, BAddress, { onAccount: B, amount: dec( 100, 30 ) } )
+
+            const repayTxB = await contracts.borrowerOperations.original.methods.repay_aeusd( dec( 19, 25 ), BAddress, BAddress, { onAccount: B } )
+            assert.equal( repayTxB.result.returnType, 'ok' )
+        } )
+
+        it( "repayLUSD(): reverts when it would leave trove with net debt < minimum net debt", async () => {
+            // Make the LUSD request 2 wei above min net debt to correct for floor division, and make net debt = min net debt + 1 wei
+            await contracts.borrowerOperations.original.methods.open_trove( testHelper._100pct, await getNetBorrowingAmount( MIN_NET_DEBT + BigInt( '2' ) ), AAddress, AAddress, { onAccount: A, amount: dec( 100, 30 ) } )
+
+            const repayTxAPromise = contracts.borrowerOperations.original.methods.repay_aeusd( 2, AAddress, AAddress, { onAccount: A } )
+            await assertRevert( repayTxAPromise, "BorrowerOps: Trove's net debt must be greater than minimum" )
+        } )
+
+        it( "repayLUSD(): reverts when calling address does not have active trove", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            // Bob successfully repays some LUSD
+            const txBob = await contracts.borrowerOperations.original.methods.repay_aeusd( dec( 10, 18 ), bobAddress, bobAddress, { onAccount: bob } )
+            assert.equal( txBob.result.returnType, 'ok' )
+
+            // A with no active trove attempts to repayLUSD
+            const repayTxAPromise = contracts.borrowerOperations.original.methods.repay_aeusd( 2, AAddress, AAddress, { onAccount: A } )
+            await assertRevert( repayTxAPromise, "BorrowerOps: Trove does not exist or is closed" )
+        } )
+
+        it( "repayLUSD(): reverts when attempted repayment is > the debt of the trove", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const aliceDebt = await getTroveEntireDebt( aliceAddress )
+
+            // Bob successfully repays some LUSD
+            const txBob = await contracts.borrowerOperations.original.methods.repay_aeusd( dec( 10, 18 ), bobAddress, bobAddress, { onAccount: bob } )
+            assert.equal( txBob.result.returnType, 'ok' )
+
+            // Alice attempts to repay more than her debt
+            const repayTxAPromise = contracts.borrowerOperations.original.methods.repay_aeusd(aliceDebt + dec(1, 18), aliceAddress, aliceAddress, { onAccount: alice } )
+            await assertRevert( repayTxAPromise, "Can not reduce the debt more than the existent" )
+        } )
+
+        //repayLUSD: reduces LUSD debt in Trove
+        it( "repayLUSD(): reduces the Trove's LUSD debt by the correct amount", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+            assert.isTrue( aliceDebtBefore > 0 )
+
+            await contracts.borrowerOperations.repay_aeusd( aliceDebtBefore / BigInt( 10 ), aliceAddress, aliceAddress, { onAccount: alice } )  // Repays 1/10 her debt
+
+            const aliceDebtAfter = await getTroveEntireDebt( aliceAddress )
+            assert.isTrue( aliceDebtAfter > 0 )
+
+            testHelper.assertIsApproximatelyEqual( aliceDebtAfter, aliceDebtBefore * BigInt(9) / BigInt(10) )  // check 9/10 debt remaining
+        } )
+
+        it( "repayLUSD(): decreases LUSD debt in ActivePool by correct amount", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+            assert.isTrue( aliceDebtBefore > 0 )
+
+            // Check before
+            const activePool_aeusd_Before = await contracts.activePool.get_aeusd_debt()
+            assert.isTrue( activePool_aeusd_Before > 0 )
+
+            await contracts.borrowerOperations.repay_aeusd( aliceDebtBefore / BigInt( 10 ), aliceAddress, aliceAddress, { onAccount: alice } )  // Repays 1/10 her debt
+
+            // check after
+            const activePool_aeusd_After = await contracts.activePool.get_aeusd_debt()
+            testHelper.assertIsApproximatelyEqual( activePool_aeusd_After, activePool_aeusd_Before - ( aliceDebtBefore / BigInt( 10 ) ) )
+        } )
+
+        it( 'repayLUSD(): can repay debt in Recovery Mode', async () => {
+            await openTrove( { extraLUSDAmount:  dec( 10000, 18 ), ICR:  dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount:  dec( 10000, 18 ), ICR:  dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+            assert.isTrue( aliceDebtBefore > 0 )
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( '105000000000000000000' )
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            const tx = await contracts.borrowerOperations.original.methods.repay_aeusd( aliceDebtBefore / BigInt(  10 ), aliceAddress, aliceAddress, { onAccount: alice } )
+            assert.equal( tx.result.returnType, 'ok' ) 
+
+            // Check Alice's debt: 110 (initial) - 50 (repaid)
+            const aliceDebtAfter = await getTroveEntireDebt( aliceAddress )
+            testHelper.assertIsApproximatelyEqual( aliceDebtAfter, aliceDebtBefore * BigInt(9) / BigInt(10) )
+        } )
+
+        it( "repayLUSD(): Reverts if borrower has insufficient LUSD balance to cover his debt repayment", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const bobBalBefore = await contracts.aeusdToken.balance( bobAddress )
+            assert.isTrue( bobBalBefore > 0 )
+
+            // Bob transfers all but 5 of his aeusd to Carol
+            await contracts.aeusdToken.transfer( CAddress, bobBalBefore - dec( 5, 18 ), { onAccount: bob } )
+
+            //Confirm B's LUSD balance has decreased to 5 aeusd
+            const bobBalAfter = await contracts.aeusdToken.balance( bobAddress )
+
+            assert.equal( bobBalAfter, dec( 5, 18 ) )
+      
+            // Bob tries to repay 6 LUSD
+            const repayAeusdPromise_B = contracts.borrowerOperations.original.methods.repay_aeusd( dec( 6, 18 ), bobAddress, bobAddress, { onAccount: bob } )
+            await testHelper.assertRevert( repayAeusdPromise_B, "Caller doesnt have enough AEUSD to make repayment" )
+        } )
+
+    // it("adjustTrove(): Reverts if repaid amount is greater than current debt", async () => {
+    //   const { totalDebt } = await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: alice } })
+    //   LUSD_GAS_COMPENSATION = await borrowerOperations.LUSD_GAS_COMPENSATION()
+    //   const repayAmount = totalDebt.sub(LUSD_GAS_COMPENSATION).add(toBN(1))
+    //   await openTrove({ extraLUSDAmount: repayAmount, ICR: toBN(dec(150, 16)), extraParams: { from: bob } })
+
+    //   await lusdToken.transfer(alice, repayAmount, { from: bob })
+
+    //   await assertRevert(borrowerOperations.adjustTrove(th._100pct, 0, repayAmount, false, alice, alice, { from: alice }),
+    //                      "SafeMath: subtraction overflow")
+    // })
+
+
+        // --- openTrove(1) ---
         it( "openTrove(): emits a TroveUpdated event with the correct collateral and debt", async () => {
 
             const txA = ( await openTrove( { extraLUSDAmount: testHelper.dec( 15000, 18 ), ICR: testHelper.dec( 2, 18 ), extraParams: { onAccount: A } } ) ).tx

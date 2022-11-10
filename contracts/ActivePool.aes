@@ -92,6 +92,7 @@ payable contract ActivePool =
     stateful entrypoint decrease_aeusd_debt(amount: int) =
         require_caller_is_bo_or_trovem_or_sp
         let aeusd_debt = SafeMath.sub(state.aeusd_debt,amount)
+        put(state{ aeusd_debt = aeusd_debt})        
         Chain.event(ActivePoolAEUSDDebtUpdated(aeusd_debt))
 
     // -- FUNCTIONS
