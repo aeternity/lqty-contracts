@@ -317,8 +317,9 @@ contract BorrowerOperations =
             // If the adjustment incorporates a debt increase and system is in Normal Mode, then trigger a borrowing fee
             let vars =
                 if (is_debt_increase && !is_recovery_mode)
-                    vars { aeusd_fee = trigger_borrowing_fee(aeusd_change, max_fee_percentage)
-                         , net_debt_change @ p = SafeMath.add(p,vars.aeusd_fee)
+                    let fee = trigger_borrowing_fee(aeusd_change, max_fee_percentage)
+                    vars { aeusd_fee = fee
+                         , net_debt_change @ p = SafeMath.add(p, fee)
                          }
                 else vars
 

@@ -98,11 +98,16 @@ const testHelper =  {
     getAEUSDFeeFromAEUSDBorrowingEvent: function(tx) {
 	for (let i = 0; i < tx.decodedEvents.length; i++) {
 	    if (tx.decodedEvents[i].name === "AEUSDBorrowingFeePaid") {
-		return (tx.decodedEvents[i].args[1]).toString()
+		return BigInt((tx.decodedEvents[i].args[1]).toString())
 	    }
 	}
 	throw ("The transaction logs do not contain an LUSDBorrowingFeePaid event")
     },    
+
+    // getAEUSDFeeFromAEUSDBorrowingEvent: function(tx) {
+    //     this.getEventArgByIndex(tx, 'AEUSDBorrowingFeePaid', 1).toString()
+    // },
+
 
     getEmittedLiquidationValues: function(liquidationTx) {
 	for (let i = 0; i < liquidationTx.decodedEvents.length; i++) {
@@ -117,14 +122,14 @@ const testHelper =  {
 	}
 	throw ("The transaction decodedEvents do not contain a liquidation event")
     },    
-    
-    // getLatestBlockTimestamp: function(sdk) {
-    // 	// const blockNumber = await web3Instance.eth.getBlockNumber()
-    // 	// const block = await web3Instance.eth.getBlock(blockNumber)
 
-    // 	const height = await sdk.getHeight()
-    // 	return height //block.timestamp
-    // },
+    getLatestBlockTimestamp: async function(sdk) {
+	// const blockNumber = await web3Instance.eth.getBlockNumber()
+	// const block = await web3Instance.eth.getBlock(blockNumber)
+
+	const height = await sdk.getHeight()
+	return height //block.timestamp
+    },
 
     // to decode Utils.xsToPayload' in events
     getPayloadByIndex: function(args, argIndex) {
@@ -229,7 +234,6 @@ const testHelper =  {
 	    const tx = await txPromise
 	    assert.notEqual(tx.result.returnType, 'ok');
 	} catch (err) {
-	    // console.log("tx failed")
 	    assert.include(err.message, message)
 	}
     },

@@ -398,6 +398,626 @@ describe( 'Borrower Operations', () => {
             assert.isAtMost( testHelper.getDifference( bob_AEUSDDebtRewardSnapshot_After, L_AEUSDDebt ), 100 )
         } )
 
+        // --- withdrawLUSD() ---
+
+        it( "withdrawLUSD(): reverts when withdrawal would leave trove with ICR < MCR", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            // Price drops
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isFalse( await contracts.troveManager.check_recovery_mode( price ) )
+            assert.isTrue( ( await contracts.troveManager.get_current_icr( aliceAddress, price ) ) <  dec( 110, 16 ) ) 
+
+            const aeusdwithdrawal = 1  // withdraw 1 wei aeusd
+
+            const txPromise = contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, aeusdwithdrawal, aliceAddress, aliceAddress, { onAccount: alice } ) 
+            await assertRevert( txPromise,
+                "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+        } )
+
+        it( "withdrawLUSD(): decays a non-zero base rate", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+
+            const A_LUSDBal = await contracts.aeusdToken.balance( AAddress )
+
+            // Artificially set base rate to 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 >  '0' )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), AAddress, AAddress, { onAccount: D } )
+
+            // Check baseRate has decreased
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_2 <  baseRate_1 )
+
+            // 1 hour passes
+            await fastForwardTime( 3600 )
+
+            // E withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), AAddress, AAddress, { onAccount: E } )
+
+            const baseRate_3 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_3 <  baseRate_2 )
+        } )
+
+        it( "withdrawLUSD(): reverts if max fee > 100%", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 2, 18 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: A } ), "Max fee percentage must be between 0.5% and 100%" )
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( '1000000000000000001', dec( 1, 18 ), AAddress, AAddress, { onAccount: A } ), "Max fee percentage must be between 0.5% and 100%" )
+        } )
+
+        it( "withdrawLUSD(): reverts if max fee < 0.5% in Normal mode", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 20, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( 0, dec( 1, 18 ), AAddress, AAddress, { onAccount: A } ), "Max fee percentage must be between 0.5% and 100%" )
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( 1, dec( 1, 18 ), AAddress, AAddress, { onAccount: A } ), "Max fee percentage must be between 0.5% and 100%" )
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( '4999999999999999', dec( 1, 18 ), AAddress, AAddress, { onAccount: A } ), "Max fee percentage must be between 0.5% and 100%" )
+        } )
+
+        it( "withdrawLUSD(): reverts if fee exceeds max fee percentage", async () => {
+            await openTrove( { extraLUSDAmount: dec( 60, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 60, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 70, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 80, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 180, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+
+            const totalSupply = await contracts.aeusdToken.total_supply()
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            let baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+
+            // 100%: 1e18,  10%: 1e17,  1%: 1e16,  0.1%: 1e15
+            // 5%: 5e16
+            // 0.5%: 5e15
+            // actual: 0.5%, 5e15
+
+            // LUSDFee:                  15000000558793542
+            // absolute _fee:            15000000558793542
+            // actual feePercentage:      5000000186264514
+            // user's _maxFeePercentage: 49999999999999999
+
+            const lessThan5pct = '49999999999999999'
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( lessThan5pct, dec( 3, 18 ), AAddress, AAddress, { onAccount: A } ), "Fee exceeded provided maximum" )
+
+            baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+            // Attempt with maxFee 1%
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 1, 16 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: B } ), "Fee exceeded provided maximum" )
+
+            baseRate = await contracts.troveManager.base_rate()  // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+            // Attempt with maxFee 3.754%
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 3754, 13 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: C } ), "Fee exceeded provided maximum" )
+
+            baseRate = await contracts.troveManager.base_rate()  // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+            // Attempt with maxFee 0.5%%
+            await assertRevert( contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 5, 15 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: D } ), "Fee exceeded provided maximum" )
+        } )
+
+        it( "withdrawLUSD(): succeeds when fee is less than max fee percentage", async () => {
+            await openTrove( { extraLUSDAmount: dec( 60, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 60, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 70, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 80, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 180, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+
+            const totalSupply = await contracts.aeusdToken.total_supply()
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            let baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate,  dec( 5, 16 ) )
+
+            // Attempt with maxFee > 5%
+            const moreThan5pct = '50000000000000001'
+            const tx1 = await contracts.borrowerOperations.original.methods.withdraw_aeusd( moreThan5pct, dec( 1, 18 ), AAddress, AAddress, { onAccount: A } )
+            assert.equal( tx1.result.returnType, 'ok' )
+
+            baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+
+            // Attempt with maxFee = 5%
+            const tx2 = await contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 5, 16 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: B } )
+            assert.equal( tx2.result.returnType, 'ok' )
+
+            baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+
+            // Attempt with maxFee 10%
+            const tx3 = await contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 1, 17 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: C } )
+            assert.equal( tx3.result.returnType, 'ok' )
+
+            baseRate = await contracts.troveManager.base_rate() // expect 5% base rate
+            assert.equal( baseRate, dec( 5, 16 ) )
+
+            // Attempt with maxFee 37.659%
+            const tx4 = await contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 37659, 13 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: D } )
+            assert.equal( tx4.result.returnType, 'ok' )
+
+            // Attempt with maxFee 100%
+            const tx5 = await contracts.borrowerOperations.original.methods.withdraw_aeusd( dec( 1, 18 ), dec( 1, 18 ), AAddress, AAddress, { onAccount: E } )
+            assert.equal( tx5.result.returnType, 'ok' )
+        } )
+
+        it( "withdrawLUSD(): doesn't change base rate if it is already zero", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, '0' )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 37, 18 ), AAddress, AAddress, { onAccount: D } )
+
+            // Check baseRate is still 0
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_2, '0' )
+
+            // 1 hour passes
+            await fastForwardTime( 3600 )
+
+            // E opens trove 
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 12, 18 ), AAddress, AAddress, { onAccount: E } )
+
+            const baseRate_3 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_3, '0' )
+        } )
+
+        it( "withdrawLUSD(): lastFeeOpTime doesn't update if less time than decay interval has passed since the last fee operation", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            const lastFeeOpTime_1 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // 10 seconds pass
+            await fastForwardTime( 10 )
+
+            // Borrower C triggers a fee
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), CAddress, CAddress, { onAccount: C } )
+
+            const lastFeeOpTime_2 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // Check that the last fee operation time did not update, as borrower D's debt issuance occured
+            // since before minimum interval had passed 
+            assert.equal( lastFeeOpTime_2, lastFeeOpTime_1 )
+
+            // 60 seconds passes
+            await fastForwardTime( 60 )
+
+            // Check that now, at least one minute has passed since lastFeeOpTime_1
+            const timeNow = await contracts.troveManager.get_timestamp_exported()// TODO: is not equivalent to await testHelper.getLatestBlockTimestamp(contracts.sdk) ? 
+            assert.isTrue( BigInt( timeNow ) - lastFeeOpTime_1 >= BigInt( 60 ) )
+
+            // Borrower C triggers a fee
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), CAddress, CAddress, { onAccount: C } )
+
+            const lastFeeOpTime_3 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // Check that the last fee operation time DID update, as borrower's debt issuance occured
+            // after minimum interval had passed 
+            assert.isTrue( lastFeeOpTime_3 > lastFeeOpTime_1 )
+        } )
+
+        it( "withdrawLUSD(): borrower can't grief the baseRate and stop it decaying by issuing debt at higher frequency than the decay granularity", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 30 seconds pass
+            await fastForwardTime( 30 )
+
+            // Borrower C triggers a fee, before decay interval has passed
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), CAddress, CAddress, { onAccount: C } )
+
+            // 30 seconds pass
+            await fastForwardTime( 30 )
+
+            // Borrower C triggers another fee
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), CAddress, CAddress, { onAccount: C } )
+
+            // Check base rate has decreased even though Borrower tried to stop it decaying
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_2 < baseRate_1 )
+        } )
+
+        it( "withdrawLUSD(): borrowing at non-zero base rate sends LUSD fee to LQTY staking contract", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY LUSD balance before == 0
+            const lqtyStaking_LUSDBalance_Before = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.equal( lqtyStaking_LUSDBalance_Before, undefined )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 37, 18 ), CAddress, CAddress, { onAccount: D } )
+
+            // Check LQTY LUSD balance after has increased
+            const lqtyStaking_LUSDBalance_After = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_After > 0 )
+        } )
+
+        it( "withdrawLUSD(): borrowing at non-zero base records the (drawn debt + fee) on the Trove struct", async () => {
+        // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            const D_debtBefore = await getTroveEntireDebt( DAddress )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D withdraws LUSD
+            const withdrawal_D = dec( 37, 18 )
+            const withdrawalTx = await contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, withdrawal_D, DAddress, DAddress, { onAccount: D } )
+            const emittedFee = testHelper.getAEUSDFeeFromAEUSDBorrowingEvent( withdrawalTx )
+            assert.isTrue( emittedFee > 0 )
+
+            const newDebt = ( await contracts.troveManager.troves() ).get( DAddress ).debt
+
+            // Check debt on Trove struct equals initial debt + withdrawal + emitted fee
+            testHelper.assertIsApproximatelyEqual( newDebt, D_debtBefore + withdrawal_D + emittedFee, 10000 )
+        } )
+
+        it( "withdrawLUSD(): Borrowing at non-zero base rate increases the LQTY staking contract LUSD fees-per-unit-staked", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY contract LUSD fees-per-unit-staked is zero
+            const F_LUSD_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.equal( F_LUSD_Before, 0 )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 37, 18 ), DAddress, DAddress, { onAccount: D } )
+
+            // Check LQTY contract LUSD fees-per-unit-staked has increased
+            const F_LUSD_After = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.isTrue( F_LUSD_After >  F_LUSD_Before )
+        } )
+
+        it( "withdrawLUSD(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY Staking contract balance before == 0
+            const lqtyStaking_LUSDBalance_Before = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.equal( lqtyStaking_LUSDBalance_Before, undefined )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            const D_LUSDBalanceBefore = await contracts.aeusdToken.balance( DAddress )
+
+            // D withdraws LUSD
+            const D_LUSDRequest = dec( 37, 18 )
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, D_LUSDRequest, DAddress, DAddress, { onAccount: D } )
+
+            // Check LQTY staking LUSD balance has increased
+            const lqtyStaking_LUSDBalance_After = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_After > 0 )
+
+            // Check D's LUSD balance now equals their initial balance plus request LUSD
+            const D_LUSDBalanceAfter = await contracts.aeusdToken.balance( DAddress )
+            assert.equal( D_LUSDBalanceAfter, D_LUSDBalanceBefore + D_LUSDRequest )
+        } )
+
+        it( "withdrawLUSD(): Borrowing at zero base rate changes LUSD fees-per-unit-staked", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // A artificially receives LQTY, then stakes it
+            await LQTYContracts.lqtyToken.unprotected_mint( AAddress, dec( 100, 18 ) )
+            await LQTYContracts.lqtyStaking.stake( dec( 100, 18 ), { onAccount: A } )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // Check LQTY LUSD balance before == 0
+            const F_LUSD_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.equal( F_LUSD_Before, 0 )
+
+            // D withdraws LUSD
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 37, 18 ), DAddress, DAddress, { onAccount: D } )
+
+            // Check LQTY LUSD balance after > 0
+            const F_LUSD_After = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.isTrue( F_LUSD_After > 0 )
+        } )
+
+        it( "withdrawLUSD(): Borrowing at zero base rate sends debt request to user", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            const D_LUSDBalanceBefore = await contracts.aeusdToken.balance( DAddress )
+
+            // D withdraws LUSD
+            const D_LUSDRequest = dec( 37, 18 )
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 37, 18 ), DAddress, DAddress, { onAccount: D } )
+
+            // Check D's LUSD balance now equals their requested LUSD
+            const D_LUSDBalanceAfter = await contracts.aeusdToken.balance( DAddress )
+
+            // Check D's trove debt == D's LUSD balance + liquidation reserve
+            assert.equal( D_LUSDBalanceAfter,  D_LUSDBalanceBefore + D_LUSDRequest )
+        } )
+
+        it( "withdrawLUSD(): reverts when calling address does not have active trove", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            // Bob successfully withdraws LUSD
+            const txBob = await contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, dec( 100, 18 ), bobAddress, bobAddress, { onAccount: bob } )
+            assert.equal( txBob.result.returnType, 'ok' )
+
+            // A account with no active trove attempts to withdraw LUSD
+            const txPromise = contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, dec( 100, 18 ), AAddress, AAddress, { onAccount: A } )
+            await assertRevert( txPromise, "BorrowerOps: Trove does not exist or is closed" )
+        } )
+
+        it( "withdrawLUSD(): reverts when requested withdrawal amount is zero LUSD", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            // Bob successfully withdraws 1e-18 LUSD
+            const txBob = await contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, 1, bobAddress, bobAddress, { onAccount: bob } )
+            assert.equal( txBob.result.returnType, 'ok' )
+
+            // Alice attempts to withdraw 0 LUSD
+            const txAlice = contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, 0, aliceAddress, aliceAddress, { onAccount: alice } )
+            await assertRevert( txAlice, "BorrowerOps: Debt increase requires non-zero debtChange" )
+        } )
+
+        it( "withdrawLUSD(): reverts when system is in Recovery Mode", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            // Withdrawal possible when recoveryMode == false
+            const txAlice = await contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, dec( 100, 18 ), aliceAddress, aliceAddress, { onAccount: alice } )
+            assert.equal( txAlice.result.returnType, 'ok' )
+
+            await contracts.priceFeedTestnet.set_price( '50000000000000000000' )
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            //Check LUSD withdrawal impossible when recoveryMode == true
+
+            const txBob = contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, 1, bobAddress, bobAddress, { onAccount: bob } )
+            await assertRevert( txBob, "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+        } )
+
+        it( "withdrawLUSD(): reverts when withdrawal would bring the trove's ICR < MCR", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 11, 17 ), extraParams: { onAccount: bob } } )
+
+            // Bob tries to withdraw LUSD that would bring his ICR < MCR
+
+            const txBob = contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, 1, bobAddress, bobAddress, { onAccount: bob } )
+            await assertRevert( txBob, "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+        } )
+
+        it( "withdrawLUSD(): reverts when a withdrawal would cause the TCR of the system to fall below the CCR", async () => {
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            // Alice and Bob creates troves with 150% ICR.  System TCR = 150%.
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: bob } } )
+
+            var TCR = ( await testHelper.getTCR( contracts ) ).toString()
+            assert.equal( TCR, '1500000000000000000' )
+
+            // Bob attempts to withdraw 1 LUSD.
+            // System TCR would be: ((3+3) * 100 ) / (200+201) = 600/401 = 149.62%, i.e. below CCR of 150%.
+            const txBob = contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 1, 18 ), bobAddress, bobAddress, { onAccount: bob } )
+            await assertRevert( txBob, "BorrowerOps: An operation that would result in TCR < CCR is not permitted" )
+        } )
+
+        it( "withdrawLUSD(): reverts if system is in Recovery Mode", async () => {
+            // --- SETUP ---
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: bob } } )
+
+            // --- TEST ---
+
+            // price drops to 1ETH:150LUSD, reducing TCR below 150%
+            await contracts.priceFeedTestnet.set_price( '150000000000000000000' )
+            assert.isTrue( ( await testHelper.getTCR( contracts ) ) < dec( 15, 17 ) )
+
+            const txData = contracts.borrowerOperations.original.methods.withdraw_aeusd( testHelper._100pct, '200', aliceAddress, aliceAddress, { onAccount: alice } )
+            await assertRevert( txData, "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+        } )
+
+        it( "withdrawLUSD(): increases the Trove's LUSD debt by the correct amount", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            // check before
+            const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+            assert.isTrue( aliceDebtBefore > 0 )
+
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, await getNetBorrowingAmount( 100 ), aliceAddress, aliceAddress, { onAccount: alice } )
+
+            // check after
+            const aliceDebtAfter = await getTroveEntireDebt( aliceAddress )
+            testHelper.assertIsApproximatelyEqual( aliceDebtAfter, aliceDebtBefore + BigInt( 100 ) )
+        } )
+
+        // it( "withdrawLUSD(): increases LUSD debt in ActivePool by correct amount", async () => {
+        //     await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice, amount: dec( 100, 'ae' ) } } )
+
+        //     const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+        //     assert.isTrue( aliceDebtBefore > 0 )
+
+        //     // check before
+        //     const activePool_LUSD_Before = await contracts.activePool.get_aeusd_debt()
+        //     assert.equal( activePool_LUSD_Before, aliceDebtBefore )
+
+        //     await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, await getNetBorrowingAmount( dec( 10000, 18 ) ), aliceAddress, aliceAddress, { onAccount: alice } )
+
+        //     // check after
+        //     const activePool_LUSD_After = await contracts.activePool.get_aeusd_debt()
+        //     testHelper.assertIsApproximatelyEqual( activePool_LUSD_After, activePool_LUSD_Before + dec( 10000, 18 ) )
+        // } )
+
+        it( "withdrawLUSD(): increases user LUSDToken balance by correct amount", async () => {
+            await openTrove( { extraParams: { amount: dec( 100, 'ae' ), onAccount: alice } } )
+
+            // check before
+            const alice_LUSDTokenBalance_Before = await contracts.aeusdToken.balance( aliceAddress )
+            assert.isTrue( alice_LUSDTokenBalance_Before > 0 )
+
+            await contracts.borrowerOperations.withdraw_aeusd( testHelper._100pct, dec( 10000, 18 ), aliceAddress, aliceAddress, { onAccount: alice } )
+
+            // check after
+            const alice_LUSDTokenBalance_After = await contracts.aeusdToken.balance( aliceAddress )
+            assert.equal( alice_LUSDTokenBalance_After,  alice_LUSDTokenBalance_Before + dec( 10000, 18 ) )
+        } )
+
         // --- repayLUSD() ---
         it( "repayLUSD(): reverts when repayment would leave trove with ICR < MCR", async () => {
             // alice creates a Trove and adds first collateral

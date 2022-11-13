@@ -32,3 +32,5 @@
         remove_trove_owner(trove_owner, List.length(state.trove_owners))
 
     entrypoint base_rate() = state.base_rate
+
+    entrypoint get_timestamp_exported() = get_timestamp()
