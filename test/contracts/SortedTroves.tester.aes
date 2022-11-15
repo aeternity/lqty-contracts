@@ -1,0 +1,36 @@
+@compiler >= 6
+
+include "../../contracts/interfaces/ISortedTroves.aes"
+
+// We need to overvome the reentrant call
+//TODO:  this should be fixed in all contracts
+contract TrovesManager =
+    entrypoint get_nominal_icr(id: address) = 1
+    entrypoint get_current_icr(id: address, value: int) = 1
+
+    //indirect call to pass the validation 
+    entrypoint remove(sorted_troves: ISortedTroves,id: address) = sorted_troves.remove(id)
+
+main contract SortedTrovesTester =
+    record state = { sorted_troves: ISortedTroves, troves_manager: TrovesManager }
+
+    stateful entrypoint init(sorted_troves: ISortedTroves) =
+      {   sorted_troves = sorted_troves
+        , troves_manager = Chain.create()
+        }
+
+    stateful entrypoint insert(
+          id: address
+        , nicr: int
+        , prev_id_opt: option(address)
+        , next_id_opt: option(address)
+        ) = state.sorted_troves.insert(id,nicr,prev_id_opt,next_id_opt)
+
+    entrypoint get_troves_manager() = state.troves_manager
+
+    //indirect call to pass the validation of being the TroveManager
+    stateful entrypoint remove(id: address) = state.troves_manager.remove(state.sorted_troves,id)
+
+    stateful entrypoint re_insert(id: address, new_nicr: int, prev_id: option(address), next_id: option(address)) =
+      state.sorted_troves.re_insert(id,new_nicr,prev_id,next_id)
+
