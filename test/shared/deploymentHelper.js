@@ -52,10 +52,10 @@ const setupDeployment = async () => {
 
         deployLQTYContracts: async ( bountyAddress, lpRewardsAddress, multisigAddress ) => {
             return withLoggingAddresses( {
-                lqtyStaking: lqtyStaking,
-                contractFactory: lockupContractFactory,
-                communityIssuance: communityIssuance,
-                lqtyToken: await deploy( './contracts/lqty/LQTYToken.aes', [
+                lqtyStaking       : lqtyStaking,
+                contractFactory   : lockupContractFactory,
+                communityIssuance : communityIssuance,
+                lqtyToken         : await deploy( './contracts/lqty/LQTYToken.aes', [
                     communityIssuance.address,
                     lqtyStaking.address,
                     lockupContractFactory.address,
@@ -142,8 +142,8 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
     } )
 
     await LQTYContracts.communityIssuance.set_addresses( {
-      lqty_token     : LQTYContracts.lqtyToken.address,
-      stability_pool : contracts.stabilityPool.address,
+        lqty_token     : LQTYContracts.lqtyToken.address,
+        stability_pool : contracts.stabilityPool.address,
     } )
 
 }
