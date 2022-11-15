@@ -240,7 +240,7 @@ contract SortedTroves =
 
         )
 
-    function
+    entrypoint
       find_insert_position: (int, option(address), option(address)) => (option(address)*option(address))
       find_insert_position(nicr,prev_id_opt,next_id_opt) = with_addresses((addresses) =>
           let prev_id_opt =  switch(prev_id_opt)
@@ -389,4 +389,3 @@ contract SortedTroves =
     //------------------------------------------------------------------------------
 
 //#inject "./dependencies/Ownable.functions.aes"
-
