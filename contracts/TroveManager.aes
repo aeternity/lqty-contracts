@@ -328,7 +328,7 @@ contract TroveManager =
     // DATA GETTERS
     //------------------------------------------------------------------------------
 
-    entrypoint troves() = state.troves
+    entrypoint troves(owner: address): option(trove) = Map.lookup(owner,state.troves)
 
     entrypoint total_stakes() = state.total_stakes
 

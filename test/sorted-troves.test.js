@@ -40,6 +40,7 @@ describe( 'SortedTroves Tests', () => {
         let contracts
         let LQTYContracts
         const openTrove = async ( params ) => testHelper.openTrove( contracts, params )
+        const getTrove = ( address ) => contracts.troveManager.troves( address )
 
         utils.beforeEachWithSnapshot( 'deploy contract', async () => {
             const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
@@ -67,12 +68,10 @@ describe( 'SortedTroves Tests', () => {
             await openTrove( { ICR: dec( 20, 18 ), extraParams: { onAccount: bob } } )
             await openTrove( { ICR: dec( 2000, 18 ), extraParams: { onAccount: carol } } )
 
-            const troves = await contracts.troveManager.troves()
-
             // Confirm trove statuses became active
-            expect( troves.get( aliceAddress ).status ).to.have.all.keys( 'Active' )
-            expect( troves.get( bobAddress ).status ).to.have.all.keys( 'Active' )
-            expect( troves.get( carolAddress ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( aliceAddress ) ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( bobAddress ) ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( carolAddress ) ).status ).to.have.all.keys( 'Active' )
 
             // Check sorted list contains troves
             assert.isTrue( await contracts.sortedTroves.contains( aliceAddress ) )
@@ -87,11 +86,10 @@ describe( 'SortedTroves Tests', () => {
             await openTrove( { ICR: dec( 2000, 18 ), extraParams: { onAccount: carol } } )
 
             // Confirm troves have non-existent status
-            const troves = await contracts.troveManager.troves()
 
             // Confirm troves have non-existent status
-            expect( troves.get( denisAddress ) ).equal( undefined )
-            expect( troves.get( erinAddress ) ).equal( undefined )
+            expect( ( await getTrove( denisAddress ) ) ).equal( undefined )
+            expect( ( await getTrove( erinAddress ) ) ).equal( undefined )
 
             // Check sorted list do not contain troves
             assert.isFalse( await contracts.sortedTroves.contains( denisAddress ) )
@@ -116,11 +114,10 @@ describe( 'SortedTroves Tests', () => {
             await contracts.borrowerOperations.close_trove( { onAccount: carol } )
 
             // Confirm trove statuses became closed
-            const troves = await contracts.troveManager.troves()
 
-            expect( troves.get( aliceAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
-            expect( troves.get( bobAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
-            expect( troves.get( carolAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( aliceAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( bobAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( carolAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
 
             // Check sorted list does not contain troves
             assert.isFalse( await contracts.sortedTroves.contains( aliceAddress ) )
@@ -147,20 +144,18 @@ describe( 'SortedTroves Tests', () => {
             await contracts.borrowerOperations.close_trove( { onAccount: carol } )
 
             // Confirm trove statuses became closed
-            let troves = await contracts.troveManager.troves()
-            expect( troves.get( aliceAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
-            expect( troves.get( bobAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
-            expect( troves.get( carolAddress ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( aliceAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( bobAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
+            expect( ( await getTrove( carolAddress ) ).status ).to.have.all.keys( 'ClosedByOwner' )
 
             await openTrove( { ICR: dec( 1000, 16 ), extraParams: { onAccount: alice } } )
             await openTrove( { ICR: dec( 2000, 18 ), extraParams: { onAccount: bob } } )
             await openTrove( { ICR: dec( 3000, 18 ), extraParams: { onAccount: carol } } )
 
             // Confirm trove statuses became open again
-            troves = await contracts.troveManager.troves()
-            expect( troves.get( aliceAddress ).status ).to.have.all.keys( 'Active' )
-            expect( troves.get( bobAddress ).status ).to.have.all.keys( 'Active' )
-            expect( troves.get( carolAddress ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( aliceAddress ) ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( bobAddress ) ).status ).to.have.all.keys( 'Active' )
+            expect( ( await getTrove( carolAddress ) ).status ).to.have.all.keys( 'Active' )
 
             // Check sorted list does  contain troves
             assert.isTrue( await contracts.sortedTroves.contains( aliceAddress ) )
