@@ -252,7 +252,6 @@ describe( 'Borrower Operations', () => {
             await contracts.borrowerOperations.withdraw_coll( testHelper.dec( 1, 'ae' ), aliceAddress, aliceAddress, { onAccount: alice } )
 
             // Check 1 ether remaining
-            const alice_Trove_After = ( await contracts.troveManager.troves() ).get( aliceAddress )
             const aliceCollAfter = await getTroveEntireColl( aliceAddress )
 
             assert.isTrue( aliceCollAfter == aliceCollBefore - testHelper.dec( 1, 'ae' ) )
@@ -281,7 +280,7 @@ describe( 'Borrower Operations', () => {
             const aliceColl = await getTroveEntireColl( aliceAddress )
             assert.isTrue( aliceColl > 0 )
             
-            const alice_Trove_Before = ( await contracts.troveManager.troves() ).get( aliceAddress )
+            const alice_Trove_Before = await contracts.troveManager.troves( aliceAddress )
             const alice_Stake_Before = BigInt( alice_Trove_Before.stake )
             const totalStakes_Before = BigInt( await contracts.troveManager.total_stakes() )
 
@@ -292,7 +291,7 @@ describe( 'Borrower Operations', () => {
             await contracts.borrowerOperations.withdraw_coll( testHelper.dec( 1, 'ae' ), aliceAddress, aliceAddress, { onAccount: alice } )
 
             // Check stake and total stakes get updated
-            const alice_Trove_After = ( await contracts.troveManager.troves() ).get( aliceAddress )
+            const alice_Trove_After = await contracts.troveManager.troves( aliceAddress )
             const alice_Stake_After = BigInt( alice_Trove_After.stake )
             const totalStakes_After = BigInt( await contracts.troveManager.total_stakes() )
 
@@ -744,7 +743,7 @@ describe( 'Borrower Operations', () => {
             const emittedFee = testHelper.getAEUSDFeeFromAEUSDBorrowingEvent( withdrawalTx )
             assert.isTrue( emittedFee > 0 )
 
-            const newDebt = ( await contracts.troveManager.troves() ).get( DAddress ).debt
+            const newDebt = ( await contracts.troveManager.troves( DAddress ) ).debt
 
             // Check debt on Trove struct equals initial debt + withdrawal + emitted fee
             testHelper.assertIsApproximatelyEqual( newDebt, D_debtBefore + withdrawal_D + emittedFee, 10000 )
@@ -1583,7 +1582,7 @@ describe( 'Borrower Operations', () => {
             const emittedFee = BigInt( testHelper.getAEUSDFeeFromAEUSDBorrowingEvent( openTroveTx ) )
             assert.isTrue( BigInt( emittedFee ) > 0 )
 
-            const newDebt = ( await contracts.troveManager.troves() ).get( DAddress ).debt
+            const newDebt = ( await contracts.troveManager.troves( DAddress ) ).debt
 
             // Check debt on Trove struct equals drawn debt plus emitted fee
             testHelper.assertIsApproximatelyEqual( newDebt, D_LUSDRequest + emittedFee + LUSD_GAS_COMPENSATION, 100000 )
