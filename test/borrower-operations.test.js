@@ -601,7 +601,7 @@ describe( 'Borrower Operations', () => {
             assert.equal( baseRate_3, '0' )
         } )
 
-        it( "withdrawLUSD(): lastFeeOpTime doesn't update if less time than decay interval has passed since the last fee operation", async () => {
+        it( "owithdrawLUSD(): lastFeeOpTime doesn't update if less time than decay interval has passed since the last fee operation", async () => {
             await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
 
             await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
@@ -1171,17 +1171,1031 @@ describe( 'Borrower Operations', () => {
             await testHelper.assertRevert( repayAeusdPromise_B, "Caller doesnt have enough AEUSD to make repayment" )
         } )
 
-        // it("adjustTrove(): Reverts if repaid amount is greater than current debt", async () => {
-        //   const { totalDebt } = await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: alice } })
-        //   LUSD_GAS_COMPENSATION = await borrowerOperations.LUSD_GAS_COMPENSATION()
-        //   const repayAmount = totalDebt.sub(LUSD_GAS_COMPENSATION).add(toBN(1))
-        //   await openTrove({ extraLUSDAmount: repayAmount, ICR: toBN(dec(150, 16)), extraParams: { from: bob } })
+        // --- adjustTrove() ---
 
-        //   await lusdToken.transfer(alice, repayAmount, { from: bob })
+        it( "adjustTrove(): Reverts if repaid amount is greater than current debt", async () => {
+            const { totalDebt } = await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            LUSD_GAS_COMPENSATION = await contracts.borrowerOperations.aeusd_gas_compensation()
+            const repayAmount = totalDebt - LUSD_GAS_COMPENSATION + BigInt( 1 )
+            await openTrove( { extraLUSDAmount: repayAmount, ICR: dec( 150, 16 ), extraParams: { onAccount: bob } } )
 
-        //   await assertRevert(borrowerOperations.adjustTrove(th._100pct, 0, repayAmount, false, alice, alice, { from: alice }),
-        //                      "SafeMath: subtraction overflow")
-        // })
+            await contracts.aeusdToken.transfer( aliceAddress, repayAmount, { onAccount: bob } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, repayAmount, false, aliceAddress, aliceAddress, { onAccount: alice } ),
+                "SafeMath: subtraction is negative" )
+        } )
+
+        it( "adjustTrove(): reverts when adjustment would leave trove with ICR < MCR", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            // Price drops
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isFalse( await contracts.troveManager.check_recovery_mode( price ) )
+            assert.isTrue( ( await contracts.troveManager.get_current_icr( aliceAddress, price ) ) < dec( 110, 16 ) )
+
+            const LUSDRepayment = 1  // 1 wei repayment
+            const collTopUp = 1
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, LUSDRepayment, false, aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } ), 
+                "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+        } )
+
+        it( "adjustTrove(): reverts if max fee < 0.5% in Normal mode", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( 0, 0, dec( 1, 18 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 2, 16 ) } ), "Max fee percentage must be between 0.5% and 100%" )
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( 1, 0, dec( 1, 18 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 2, 16 ) } ), "Max fee percentage must be between 0.5% and 100%" )
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( BigInt( 4999999999999999 ), 0, dec( 1, 18 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 2, 16 ) } ), "Max fee percentage must be between 0.5% and 100%" )
+        } )
+
+        it( "adjustTrove(): allows max fee < 0.5% in Recovery mode", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob, amount: dec( 100, 'ae' ) } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+
+            await contracts.priceFeedTestnet.set_price( dec( 120, 18 ) )
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.borrowerOperations.adjust_trove( 0, 0, dec( 1, 9 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 300, 18 ) } )
+            await contracts.priceFeedTestnet.set_price( dec( 1, 18 ) )
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+            await contracts.borrowerOperations.adjust_trove( 1, 0, dec( 1, 9 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 30000, 18 ) } )
+            await contracts.priceFeedTestnet.set_price( dec( 1, 16 ) )
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+            await contracts.borrowerOperations.adjust_trove( '4999999999999999', 0, dec( 1, 9 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 3000000, 18 ) } )
+        } )
+
+        it( "adjustTrove(): decays a non-zero base rate", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 18 ), true, DAddress, DAddress, { onAccount: D } )
+
+            // Check baseRate has decreased
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_2 < baseRate_1 )
+
+            // 1 hour passes
+            await fastForwardTime( 3600 )
+
+            // E adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 15 ), true, EAddress, EAddress, { onAccount: D } )
+
+            const baseRate_3 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_3 < baseRate_2 )
+        } )
+
+        it( "adjustTrove(): doesn't decay a non-zero base rate when user issues 0 debt", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // D opens trove 
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove with 0 debt
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, 0, false, DAddress, DAddress, { onAccount: D, amount: dec( 1, 'ae' ) } )
+
+            // Check baseRate has not decreased 
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_2, baseRate_1 )
+        } )
+
+        it( "adjustTrove(): doesn't change base rate if it is already zero", async () => {
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: E } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 18 ), true, DAddress, DAddress, { onAccount: D } )
+
+            // Check baseRate is still 0
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_2, '0' )
+
+            // 1 hour passes
+            await fastForwardTime( 3600 )
+
+            // E adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 15 ), true, EAddress, EAddress, { onAccount: D } )
+
+            const baseRate_3 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_3, 0 )
+        } )
+
+        it( "adjustTrove(): lastFeeOpTime doesn't update if less time than decay interval has passed since the last fee operation", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            const lastFeeOpTime_1 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // 10 seconds pass
+            await fastForwardTime( 10 )
+
+            // Borrower C triggers a fee
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 1, 18 ), true, CAddress, CAddress, { onAccount: C } )
+
+            const lastFeeOpTime_2 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // Check that the last fee operation time did not update, as borrower D's debt issuance occured
+            // since before minimum interval had passed 
+            assert.equal( lastFeeOpTime_2, lastFeeOpTime_1 )
+
+            // 60 seconds passes
+            await fastForwardTime( 60 )
+
+            // Check that now, at least one minute has passed since lastFeeOpTime_1
+            const timeNow = await contracts.troveManager.get_timestamp_exported() // TODO: await testHelper.getLatestBlockTimestamp(web3)
+            assert.isTrue( timeNow - lastFeeOpTime_1 >= 60 )
+
+            // Borrower C triggers a fee
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 1, 18 ), true, CAddress, CAddress, { onAccount: C } )
+
+            const lastFeeOpTime_3 = await contracts.troveManager.get_last_fee_operation_time()
+
+            // Check that the last fee operation time DID update, as borrower's debt issuance occured
+            // after minimum interval had passed 
+            assert.isTrue( lastFeeOpTime_3 > lastFeeOpTime_1 )
+        } )
+
+        it( "adjustTrove(): borrower can't grief the baseRate and stop it decaying by issuing debt at higher frequency than the decay granularity", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // Borrower C triggers a fee, before decay interval of 1 minute has passed
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 1, 18 ), true, CAddress, CAddress, { onAccount: C } )
+
+            // 1 minute passes
+            await fastForwardTime( 60 )
+
+            // Borrower C triggers another fee
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 1, 18 ), true, CAddress, CAddress, { onAccount: C } )
+
+            // Check base rate has decreased even though Borrower tried to stop it decaying
+            const baseRate_2 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_2 < baseRate_1 )
+        } )
+
+        it( "adjustTrove(): borrowing at non-zero base rate sends LUSD fee to LQTY staking contract", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY LUSD balance before == 0
+            const lqtyStaking_LUSDBalance_Before = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.equal( lqtyStaking_LUSDBalance_Before, undefined )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove
+            await openTrove( { extraLUSDAmount: dec( 37, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check LQTY LUSD balance after has increased
+            const lqtyStaking_LUSDBalance_After = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_After > 0 )
+        } )
+
+        it( "adjustTrove(): borrowing at non-zero base records the (drawn debt + fee) on the Trove struct", async () => {
+        // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+            const D_debtBefore = await getTroveEntireDebt( DAddress )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            const withdrawal_D = dec( 37, 18 )
+
+            // D withdraws LUSD
+            const adjustmentTx = await contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, withdrawal_D, true, DAddress, DAddress, { onAccount: D } )
+
+            const emittedFee = testHelper.getAEUSDFeeFromAEUSDBorrowingEvent( adjustmentTx )
+            assert.isTrue( emittedFee > 0 )
+
+            const D_newDebt = ( await contracts.troveManager.troves( DAddress ) ).debt
+    
+            // Check debt on Trove struct equals initila debt plus drawn debt plus emitted fee
+            assert.isTrue( D_newDebt ==  D_debtBefore + withdrawal_D + emittedFee )
+        } )
+
+        it( "adjustTrove(): Borrowing at non-zero base rate increases the LQTY staking contract LUSD fees-per-unit-staked", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY contract LUSD fees-per-unit-staked is zero
+            const F_LUSD_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.equal( F_LUSD_Before, 0 )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 >  0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 18 ), true, DAddress, DAddress, { onAccount: D } )
+
+            // Check LQTY contract LUSD fees-per-unit-staked has increased
+            const F_LUSD_After = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.isTrue( F_LUSD_After > F_LUSD_Before )
+        } )
+
+        it( "adjustTrove(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
+            // time fast-forwards 1 year, and multisig stakes 1 LQTY
+            await await fastForwardTime( timeValues.SECONDS_IN_ONE_YEAR )
+            await LQTYContracts.lqtyToken.create_allowance( LQTYContracts.lqtyStaking.accountAddress, dec( 1, 18 ), { onAccount: multisig } )
+            await LQTYContracts.lqtyStaking.stake( dec( 1, 18 ), { onAccount: multisig } )
+
+            // Check LQTY Staking contract balance before == 0
+            const lqtyStaking_LUSDBalance_Before = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.equal( lqtyStaking_LUSDBalance_Before, undefined )
+
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            const D_LUSDBalanceBefore = await contracts.aeusdToken.balance( DAddress )
+
+            // Artificially make baseRate 5%
+            await contracts.troveManager.set_base_rate( dec( 5, 16 ) )
+            await contracts.troveManager.set_last_fee_op_time_to_now()
+
+            // Check baseRate is now non-zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.isTrue( baseRate_1 > 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // D adjusts trove
+            const LUSDRequest_D = dec( 40, 18 )
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, LUSDRequest_D, true, DAddress, DAddress, { onAccount: D } )
+
+            // Check LQTY staking LUSD balance has increased
+            const lqtyStaking_LUSDBalance_After = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_After > 0 )
+
+            // Check D's LUSD balance has increased by their requested LUSD
+            const D_LUSDBalanceAfter = await contracts.aeusdToken.balance( DAddress )
+            assert.equal( D_LUSDBalanceAfter, D_LUSDBalanceBefore + LUSDRequest_D )
+        } )
+
+        it( "adjustTrove(): Borrowing at zero base rate changes LUSD balance of LQTY staking contract", async () => {
+            await openTrove( { ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 30, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 50, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // Check staking LUSD balance before > 0
+            const lqtyStaking_LUSDBalance_Before = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_Before > 0 )
+
+            // D adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 18 ), true, DAddress, DAddress, { onAccount: D } )
+
+            // Check staking LUSD balance after > staking balance before
+            const lqtyStaking_LUSDBalance_After = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStaking_LUSDBalance_After >  lqtyStaking_LUSDBalance_Before )
+        } )
+
+        it( "adjustTrove(): Borrowing at zero base rate changes LQTY staking contract LUSD fees-per-unit-staked", async () => {
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob, amount: dec( 100, 'ae' ) } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            // A artificially receives LQTY, then stakes it
+            await LQTYContracts.lqtyToken.unprotected_mint( AAddress, dec( 100, 18 ) )
+            await LQTYContracts.lqtyStaking.stake( dec( 100, 18 ), { onAccount: A } )
+
+            // Check staking LUSD balance before == 0
+            const F_LUSD_Before = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.equal( F_LUSD_Before, 0 )
+
+            // D adjusts trove
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 37, 18 ), true, DAddress, DAddress, { onAccount: D } )
+
+            // Check staking LUSD balance increases
+            const F_LUSD_After = await LQTYContracts.lqtyStaking.f_aeusd()
+            assert.isTrue( F_LUSD_After > F_LUSD_Before )
+        } )
+
+        it( "adjustTrove(): Borrowing at zero base rate sends total requested LUSD to the user", async () => {
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob, amount: dec( 100, 'ae' ) } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: A } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: B } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+            await openTrove( { extraLUSDAmount: dec( 40000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: D } } )
+
+            const D_LUSDBalBefore = await contracts.aeusdToken.balance( DAddress )
+            // Check baseRate is zero
+            const baseRate_1 = await contracts.troveManager.base_rate()
+            assert.equal( baseRate_1, 0 )
+
+            // 2 hours pass
+            await fastForwardTime( 7200 )
+
+            const DUSDBalanceBefore = await contracts.aeusdToken.balance( DAddress )
+
+            // D adjusts trove
+            const LUSDRequest_D = dec( 40, 18 )
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, LUSDRequest_D, true, DAddress, DAddress, { onAccount: D } )
+
+            // Check D's LUSD balance increased by their requested LUSD
+            const LUSDBalanceAfter = await contracts.aeusdToken.balance( DAddress )
+            assert.equal( LUSDBalanceAfter, D_LUSDBalBefore + LUSDRequest_D )
+        } )
+
+        it( "adjustTrove(): reverts when calling address has no active trove", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            // Alice coll and debt increase(+1 ETH, +50LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods. adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 1, 'ae' ) } ),
+                                           "BorrowerOps: Trove does not exist or is closed" )
+        } )
+
+        it( "adjustTrove(): reverts in Recovery Mode when the adjustment would reduce the TCR", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            const txAlice = await contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+            assert.equal( txAlice.result.returnType, 'ok' )
+
+            await contracts.priceFeedTestnet.set_price( dec( 120, 18 ) ) // trigger drop in ETH price
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            // collateral withdrawal should also fail
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, dec( 1, 'ae' ), 0, false, aliceAddress, aliceAddress, { onAccount: alice } ),
+                "BorrowerOps: Collateral withdrawal not permitted Recovery Mode" )
+
+            //debt increase should fail
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, bobAddress, bobAddress, { onAccount: bob } ),
+                "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+
+            // debt increase that's also a collateral increase should also fail, if ICR will be worse off
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 111, 18 ), true, bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
+                "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+        } )
+
+        it( "adjustTrove(): collateral withdrawal reverts in Recovery Mode", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 120, 18 ) ) // trigger drop in ETH price
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            // Alice attempts an adjustment that repays half her debt BUT withdraws 1 wei collateral, and fails
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 1, dec( 5000, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice } ),
+                "BorrowerOps: Collateral withdrawal not permitted Recovery Mode" )
+        } )
+
+        it( "adjustTrove(): debt increase that would leave ICR < 150% reverts in Recovery Mode", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 20000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const CCR = await contracts.troveManager.ccr()
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 120, 18 ) ) // trigger drop in ETH price
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            const ICR_A = await contracts.troveManager.get_current_icr( aliceAddress, price )
+
+            const aliceDebt = await getTroveEntireDebt( aliceAddress )
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+            const debtIncrease = dec( 50, 18 )
+            const collIncrease = dec( 1, 'ae' )
+
+            // Check the new ICR would be an improvement, but less than the CCR (150%)
+            const newICR = await contracts.troveManager.compute_icr( aliceColl + collIncrease, aliceDebt + debtIncrease, price )
+
+            assert.isTrue( newICR > ICR_A && newICR < CCR )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, debtIncrease, true, aliceAddress, aliceAddress, { onAccount: alice, amount: collIncrease } ),
+                "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+        } )
+
+        it( "adjustTrove(): debt increase that would reduce the ICR reverts in Recovery Mode", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 3, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const CCR = await contracts.troveManager.ccr()
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 105, 18 ) ) // trigger drop in ETH price
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            //--- Alice with ICR > 150% tries to reduce her ICR ---
+
+            const ICR_A = await contracts.troveManager.get_current_icr( aliceAddress, price )
+
+            // Check Alice's initial ICR is above 150%
+            assert.isTrue( ICR_A > CCR )
+
+            const aliceDebt = await getTroveEntireDebt( aliceAddress )
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+            const aliceDebtIncrease = dec( 150, 18 )
+            const aliceCollIncrease = dec( 1, 'ae' )
+
+            const newICR_A = await contracts.troveManager.compute_icr( aliceColl + aliceCollIncrease, aliceDebt + aliceDebtIncrease, price )
+
+            // Check Alice's new ICR would reduce but still be greater than 150%
+            assert.isTrue( newICR_A < ICR_A && newICR_A > CCR )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, aliceDebtIncrease, true, aliceAddress, aliceAddress, { onAccount: alice, amount: aliceCollIncrease } ),
+                "BorrowerOps: Cannot decrease your Trove's ICR in Recovery Mode" )
+
+            //--- Bob with ICR < 150% tries to reduce his ICR ---
+
+            const ICR_B = await contracts.troveManager.get_current_icr( bobAddress, price )
+
+            // Check Bob's initial ICR is below 150%
+            assert.isTrue( ICR_B < CCR )
+
+            const bobDebt = await getTroveEntireDebt( bobAddress )
+            const bobColl = await getTroveEntireColl( bobAddress )
+            const bobDebtIncrease = dec( 450, 18 )
+            const bobCollIncrease = dec( 1, 'ae' )
+
+            const newICR_B = await contracts.troveManager.compute_icr( bobColl + bobCollIncrease, bobDebt + bobDebtIncrease, price )
+
+            // Check Bob's new ICR would reduce 
+            assert.isTrue( newICR_B < ICR_B )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, bobDebtIncrease, true, bobAddress, bobAddress, { onAccount: bob, amount: bobCollIncrease } ),
+                "BorrowerOps: Operation must leave trove with ICR >= CCR" )
+        } )
+
+        it( "adjustTrove(): A trove with ICR < CCR in Recovery Mode can adjust their trove to ICR > CCR", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const CCR = await contracts.troveManager.ccr()
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) ) // trigger drop in ETH price
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            const ICR_A = await contracts.troveManager.get_current_icr( aliceAddress, price )
+            // Check initial ICR is below 150%
+            assert.isTrue( ICR_A < CCR )
+
+            const aliceDebt = await getTroveEntireDebt( aliceAddress )
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+            const debtIncrease = dec( 5000, 18 )
+            const collIncrease = dec( 150, 'ae' )
+
+            const newICR = await contracts.troveManager.compute_icr( aliceColl + collIncrease, aliceDebt + debtIncrease, price )
+
+            // Check new ICR would be > 150%
+            assert.isTrue( newICR > CCR )
+
+            const tx = await contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, debtIncrease, true, aliceAddress, aliceAddress, { onAccount: alice, amount: collIncrease } )
+            assert.equal( tx.result.returnType, 'ok' )
+
+            const actualNewICR = await contracts.troveManager.get_current_icr( aliceAddress, price )
+            assert.isTrue( actualNewICR > CCR )
+        } )
+
+        it( "adjustTrove(): A trove with ICR > CCR in Recovery Mode can improve their ICR", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 3, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            const CCR = await contracts.troveManager.ccr()
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 105, 18 ) ) // trigger drop in ETH price
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            const initialICR = await contracts.troveManager.get_current_icr( aliceAddress, price )
+            // Check initial ICR is above 150%
+            assert.isTrue( initialICR >  CCR )
+
+            const aliceDebt = await getTroveEntireDebt( aliceAddress )
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+            const debtIncrease = dec( 5000, 18 )
+            const collIncrease = dec( 150, 'ae' )
+
+            const newICR = await contracts.troveManager.compute_icr( aliceColl +  collIncrease, aliceDebt + debtIncrease, price )
+
+            // Check new ICR would be > old ICR
+            assert.isTrue( newICR > initialICR )
+
+            const tx = await contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, debtIncrease, true, aliceAddress, aliceAddress, { onAccount: alice, amount: collIncrease } )
+            assert.equal( tx.result.returnType, 'ok' )
+
+            const actualNewICR = await contracts.troveManager.get_current_icr( aliceAddress, price )
+            assert.isTrue( actualNewICR >  initialICR )
+        } )
+
+        it( "adjustTrove(): debt increase in Recovery Mode charges no fee", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 200000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( dec( 120, 18 ) ) // trigger drop in ETH price
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            // B stakes LQTY
+            await LQTYContracts.lqtyToken.unprotected_mint( bobAddress, dec( 100, 18 ) )
+            await LQTYContracts.lqtyStaking.stake( dec( 100, 18 ), { onAccount: bob } )
+
+            const lqtyStakingLUSDBalanceBefore = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.isTrue( lqtyStakingLUSDBalanceBefore > 0 )
+
+            const txAlice = await contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 100, 'ae' ) } )
+            assert.equal( txAlice.result.returnType, 'ok' )
+
+            // Check emitted fee = 0
+            const emittedFee = await testHelper.getEventArgByIndex( txAlice, 'AEUSDBorrowingFeePaid', 1 )
+            assert.equal( emittedFee, 0 )
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            // Check no fee was sent to staking contract
+            const lqtyStakingLUSDBalanceAfter = await contracts.aeusdToken.balance( LQTYContracts.lqtyStaking.accountAddress )
+            assert.equal( lqtyStakingLUSDBalanceAfter, lqtyStakingLUSDBalanceBefore )
+        } )
+
+        it( "adjustTrove(): reverts when change would cause the TCR of the system to fall below the CCR", async () => {
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 15, 17 ), extraParams: { onAccount: bob } } )
+
+            // Check TCR and Recovery Mode
+            const TCR = ( await testHelper.getTCR( contracts ) ).toString()
+            assert.equal( TCR, '1500000000000000000' )
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            // Bob attempts an operation that would bring the TCR below the CCR
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 1, 18 ), true, bobAddress, bobAddress, { onAccount: bob } ),
+                "BorrowerOps: An operation that would result in TCR < CCR is not permitted" )
+
+        } )
+
+        it( "adjustTrove(): reverts when LUSD repaid is > debt of the trove", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            const bobOpenTx = ( await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } ) ).tx
+
+            const bobDebt = await getTroveEntireDebt( bobAddress )
+            assert.isTrue( bobDebt > 0 )
+
+            const bobFee = await testHelper.getEventArgByIndex( bobOpenTx, 'AEUSDBorrowingFeePaid', 1 )
+            assert.isTrue( bobFee > 0 )
+
+            // Alice transfers LUSD to bob to compensate borrowing fees
+            await contracts.aeusdToken.transfer( bobAddress, bobFee, { onAccount: alice } )
+
+            const remainingDebt = ( await contracts.troveManager.get_trove_debt( bobAddress ) ) - LUSD_GAS_COMPENSATION
+
+            // Bob attempts an adjustment that would repay 1 wei more than his debt
+            await testHelper.assertRevert(
+                contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, remainingDebt + BigInt(1), false, bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
+                "SafeMath: subtraction is negative"
+            )
+        } )
+
+        it( "adjustTrove(): reverts when attempted ETH withdrawal is >= the trove's collateral", async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            const cColl = await getTroveEntireColl( CAddress )
+
+            // C attempts an adjustment that would withdraw 1 wei more than her ETH
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, cColl + BigInt(1), 0, true, CAddress, CAddress, { onAccount: C } ),
+                "BorrowerOps: Debt increase requires non-zero debtChange" )
+        } )
+
+        it( "adjustTrove(): reverts when change would cause the ICR of the trove to fall below the MCR", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 100, 18 ), extraParams: { onAccount: A } } )
+
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 11, 17 ), extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 11, 17 ), extraParams: { onAccount: bob } } )
+
+            // Bob attempts to increase debt by 100 LUSD and 1 ae, i.e. a change that constitutes a 100% ratio of coll:debt.
+            // Since his ICR prior is 110%, this change would reduce his ICR below MCR.
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, dec( 100, 18 ), true, bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
+                "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+        } )
+
+        it( "adjustTrove(): With 0 coll change, doesnt change borrower's coll or ActivePool coll", async () => {
+            await openTrove( { extraLUSDAmount:  dec( 10000, 18 ) , ICR:  dec( 2, 18 ) , extraParams: { onAccount: alice } } )
+
+            const aliceCollBefore = await getTroveEntireColl( aliceAddress )
+            const activePoolCollBefore = await contracts.activePool.get_ae()
+
+            assert.isTrue( aliceCollBefore > 0 )
+            assert.equal( aliceCollBefore, activePoolCollBefore )
+
+            // Alice adjusts trove. No coll change, and a debt increase (+50LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: 0 } )
+
+            const aliceCollAfter = await getTroveEntireColl( aliceAddress )
+            const activePoolCollAfter = await contracts.activePool.get_ae()
+
+            assert.equal( aliceCollAfter, activePoolCollAfter )
+            assert.equal( activePoolCollAfter, activePoolCollAfter )
+        } )
+
+        it( "adjustTrove(): With 0 debt change, doesnt change borrower's debt or ActivePool debt", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            const aliceDebtBefore = await getTroveEntireDebt( aliceAddress )
+            const activePoolDebtBefore = await contracts.activePool.get_aeusd_debt()
+
+            assert.isTrue( aliceDebtBefore > 0 )
+            assert.equal( aliceDebtBefore, activePoolDebtBefore )
+
+            // Alice adjusts trove. Coll change, no debt change
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, 0, false, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const aliceDebtAfter = await getTroveEntireDebt( aliceAddress )
+            const activePoolDebtAfter = await contracts.activePool.get_aeusd_debt()
+
+            assert.equal( aliceDebtAfter, aliceDebtBefore )
+            assert.equal( activePoolDebtAfter, activePoolDebtBefore )
+        } )
+
+        it( "adjustTrove(): updates borrower's debt and coll with an increase in both", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const debtBefore = await getTroveEntireDebt( aliceAddress )
+            const collBefore = await getTroveEntireColl( aliceAddress )
+            assert.isTrue( debtBefore > 0 )
+            assert.isTrue( collBefore > 0 )
+
+            // Alice adjusts trove. Coll and debt increase(+1 ETH, +50LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, await getNetBorrowingAmount( dec( 50, 18 ) ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const debtAfter = await getTroveEntireDebt( aliceAddress )
+            const collAfter = await getTroveEntireColl( aliceAddress )
+
+            testHelper.assertIsApproximatelyEqual( debtAfter, debtBefore +  dec( 50, 18 ), 10000 )
+            testHelper.assertIsApproximatelyEqual( collAfter, collBefore +  dec( 1, 18 ), 10000 )
+        } )
+
+        it( "adjustTrove(): updates borrower's debt and coll with a decrease in both", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const debtBefore = await getTroveEntireDebt( aliceAddress )
+            const collBefore = await getTroveEntireColl( aliceAddress )
+            assert.isTrue( debtBefore > 0 )
+            assert.isTrue( collBefore > 0 )
+
+            // Alice adjusts trove coll and debt decrease (-0.5 ETH, -50LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, dec( 500, 'finney' ), dec( 50, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice } )
+
+            const debtAfter = await getTroveEntireDebt( aliceAddress )
+            const collAfter = await getTroveEntireColl( aliceAddress )
+
+            assert.equal( debtAfter, debtBefore - dec( 50, 18 ) )
+            assert.equal( collAfter, collBefore - dec( 5, 17 ) )
+        } )
+
+        it( "adjustTrove(): updates borrower's  debt and coll with coll increase, debt decrease", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const debtBefore = await getTroveEntireDebt( aliceAddress )
+            const collBefore = await getTroveEntireColl( aliceAddress )
+            assert.isTrue( debtBefore > 0 )
+            assert.isTrue( collBefore > 0 )
+
+            // Alice adjusts trove - coll increase and debt decrease (+0.5 ETH, -50LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 500, 'finney' ) } )
+
+            const debtAfter = await getTroveEntireDebt( aliceAddress )
+            const collAfter = await getTroveEntireColl( aliceAddress )
+
+            testHelper.assertIsApproximatelyEqual( debtAfter, debtBefore - dec( 50, 18 ), 10000 )
+            testHelper.assertIsApproximatelyEqual( collAfter, collBefore + dec( 5, 17 ), 10000 )
+        } )
+
+        it( "adjustTrove(): updates borrower's debt and coll with coll decrease, debt increase", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const debtBefore = await getTroveEntireDebt( aliceAddress )
+            const collBefore = await getTroveEntireColl( aliceAddress )
+            assert.isTrue( debtBefore > 0 )
+            assert.isTrue( collBefore > 0 )
+
+            // Alice adjusts trove - coll decrease and debt increase (0.1 ETH, 10LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, dec( 1, 17 ), await getNetBorrowingAmount( dec( 1, 18 ) ), true, aliceAddress, aliceAddress, { onAccount: alice } )
+
+            const debtAfter = await getTroveEntireDebt( aliceAddress )
+            const collAfter = await getTroveEntireColl( aliceAddress )
+
+            testHelper.assertIsApproximatelyEqual( debtAfter, debtBefore + dec( 1, 18 ), 10000 )
+            testHelper.assertIsApproximatelyEqual( collAfter, collBefore - dec( 1, 17 ), 10000 )
+        } )
+
+        it( "adjustTrove(): updates borrower's stake and totalStakes with a coll increase", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const stakeBefore = await contracts.troveManager.get_trove_stake( aliceAddress )
+            const totalStakesBefore = await contracts.troveManager.total_stakes()
+            assert.isTrue( stakeBefore > 0 )
+            assert.isTrue( totalStakesBefore > 0 )
+
+            // Alice adjusts trove - coll and debt increase (+1 ETH, +50 LUSD)
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const stakeAfter = await contracts.troveManager.get_trove_stake( aliceAddress )
+            const totalStakesAfter = await contracts.troveManager.total_stakes()
+
+            assert.equal( stakeAfter, stakeBefore + dec( 1, 18 ) )
+            assert.equal( totalStakesAfter, totalStakesBefore + dec( 1, 18 ) )
+        } )
+
+        it( "adjustTrove(): updates borrower's stake and totalStakes with a coll decrease", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const stakeBefore = await contracts.troveManager.get_trove_stake( aliceAddress )
+            const totalStakesBefore = await contracts.troveManager.total_stakes()
+            assert.isTrue( stakeBefore > 0 )
+            assert.isTrue( totalStakesBefore > 0 )
+
+            // Alice adjusts trove - coll decrease and debt decrease
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, dec( 500, 'finney' ), dec( 50, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice } )
+
+            const stakeAfter = await contracts.troveManager.get_trove_stake( aliceAddress )
+            const totalStakesAfter = await contracts.troveManager.total_stakes()
+
+            assert.equal( stakeAfter, stakeBefore - dec( 5, 17 ) )
+            assert.equal( totalStakesAfter, totalStakesBefore - dec( 5, 17 ) )
+        } )
+
+        it( "adjustTrove(): changes LUSDToken balance by the requested decrease", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const alice_LUSDTokenBalance_Before = await contracts.aeusdToken.balance( aliceAddress )
+            assert.isTrue( alice_LUSDTokenBalance_Before > 0 )
+
+            // Alice adjusts trove - coll decrease and debt decrease
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, dec( 100, 'finney' ), dec( 10, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice } )
+
+            // check after
+            const alice_LUSDTokenBalance_After = await contracts.aeusdToken.balance( aliceAddress )
+            assert.equal( alice_LUSDTokenBalance_After,  alice_LUSDTokenBalance_Before - dec( 10, 18 ) )
+        } )
+
+        it( "adjustTrove(): changes LUSDToken balance by the requested increase", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const alice_LUSDTokenBalance_Before = await contracts.aeusdToken.balance( aliceAddress )
+            assert.isTrue( alice_LUSDTokenBalance_Before > 0 )
+
+            // Alice adjusts trove - coll increase and debt increase
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 100, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            // check after
+            const alice_LUSDTokenBalance_After = await contracts.aeusdToken.balance( aliceAddress )
+            assert.equal( alice_LUSDTokenBalance_After, alice_LUSDTokenBalance_Before + dec( 100, 18 ) )
+        } )
+
+        it( "adjustTrove(): Changes the activePool ETH and raw ae balance by the requested decrease", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const activePool_ETH_Before = await contracts.activePool.get_ae()
+            const activePool_Rawae_Before = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+            assert.isTrue( activePool_ETH_Before > 0 )
+            assert.isTrue( activePool_Rawae_Before > 0 )
+
+            // Alice adjusts trove - coll decrease and debt decrease
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, dec( 100, 'finney' ), dec( 10, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice } )
+
+            const activePool_ETH_After = await contracts.activePool.get_ae()
+            const activePool_Rawae_After = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+            assert.equal( activePool_ETH_After, activePool_ETH_Before - dec( 1, 17 ) )
+            assert.equal( activePool_Rawae_After, activePool_ETH_Before - dec( 1, 17 ) )
+        } )
+
+        it( "adjustTrove(): Changes the activePool ETH and raw ae balance by the amount of ETH sent", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const activePool_ETH_Before = await contracts.activePool.get_ae()
+            const activePool_Rawae_Before = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+            assert.isTrue( activePool_ETH_Before > 0 )
+            assert.isTrue( activePool_Rawae_Before > 0 )
+
+            // Alice adjusts trove - coll increase and debt increase
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 100, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const activePool_ETH_After = await contracts.activePool.get_ae()
+            const activePool_Rawae_After = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+            assert.equal( activePool_ETH_After, activePool_ETH_Before + dec( 1, 18 ) )
+            assert.equal( activePool_Rawae_After, activePool_ETH_Before + dec( 1, 18 ) )
+        } )
+
+        it( "adjustTrove(): Changes the LUSD debt in ActivePool by requested decrease", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const activePool_LUSDDebt_Before = await contracts.activePool.get_aeusd_debt()
+            assert.isTrue( activePool_LUSDDebt_Before > 0 )
+
+            // Alice adjusts trove - coll increase and debt decrease
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 30, 18 ), false, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const activePool_LUSDDebt_After = await contracts.activePool.get_aeusd_debt()
+            assert.equal( activePool_LUSDDebt_After, activePool_LUSDDebt_Before - dec( 30, 18 ) )
+        } )
+
+        it( "adjustTrove(): Changes the LUSD debt in ActivePool by requested increase", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const activePool_LUSDDebt_Before = await contracts.activePool.get_aeusd_debt()
+            assert.isTrue( activePool_LUSDDebt_Before > 0 )
+
+            // Alice adjusts trove - coll increase and debt increase
+            await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, await getNetBorrowingAmount( dec( 100, 18 ) ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const activePool_LUSDDebt_After = await contracts.activePool.get_aeusd_debt()
+    
+            testHelper.assertIsApproximatelyEqual( activePool_LUSDDebt_After, activePool_LUSDDebt_Before + dec( 100, 18 ) )
+        } )
+
+    // it("adjustTrove(): new coll = 0 and new debt = 0 is not allowed, as gas compensation still counts toward ICR", async () => {
+    //   await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: whale } })
+
+    //   await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: alice } })
+    //   const aliceColl = await getTroveEntireColl(alice)
+    //   const aliceDebt = await getTroveEntireColl(alice)
+    //   const status_Before = await troveManager.getTroveStatus(alice)
+    //   const isInSortedList_Before = await sortedTroves.contains(alice)
+
+    //   assert.equal(status_Before, 1)  // 1: Active
+    //   assert.isTrue(isInSortedList_Before)
+
+    //   await assertRevert(
+    //     borrowerOperations.adjustTrove(th._100pct, aliceColl, aliceDebt, true, alice, alice, { from: alice }),
+    //     'BorrowerOps: An operation that would result in ICR < MCR is not permitted'
+    //   )
+    // })
+
 
         // --- openTrove(1) ---
         it( "openTrove(): emits a TroveUpdated event with the correct collateral and debt", async () => {
