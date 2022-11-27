@@ -1,0 +1,9 @@
+    stateful entrypoint call_internal_adjust_loan(
+          borrower: address
+        , coll_withdrawal: int
+        , aeusd_change: int
+        , is_debt_increase: bool
+        , upper_hint: option(address)
+        , lower_hint: option(address)
+        ): IBorrowerOperations.adjust_trove() =
+        adjust_trove'(borrower, coll_withdrawal, aeusd_change, is_debt_increase, upper_hint, lower_hint, 0)
