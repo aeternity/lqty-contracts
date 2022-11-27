@@ -718,3 +718,5 @@ contract BorrowerOperations =
 
 //#inject "./dependencies/Ownable.functions.aes"
 //#inject "./dependencies/LiquityBase.functions.aes"
+
+//#inject-debug "../test/contracts/BorrowingOperations.tester.aes"

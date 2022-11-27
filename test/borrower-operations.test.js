@@ -2178,24 +2178,86 @@ describe( 'Borrower Operations', () => {
             testHelper.assertIsApproximatelyEqual( activePool_LUSDDebt_After, activePool_LUSDDebt_Before + dec( 100, 18 ) )
         } )
 
-    // it("adjustTrove(): new coll = 0 and new debt = 0 is not allowed, as gas compensation still counts toward ICR", async () => {
-    //   await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: whale } })
+        it( "adjustTrove(): new coll = 0 and new debt = 0 is not allowed, as gas compensation still counts toward ICR", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
 
-    //   await openTrove({ extraLUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: alice } })
-    //   const aliceColl = await getTroveEntireColl(alice)
-    //   const aliceDebt = await getTroveEntireColl(alice)
-    //   const status_Before = await troveManager.getTroveStatus(alice)
-    //   const isInSortedList_Before = await sortedTroves.contains(alice)
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+            const aliceDebt = await getTroveEntireColl( aliceAddress )
+            const status_Before = await contracts.troveManager.get_trove_status( aliceAddress )
+            const isInSortedList_Before = await contracts.sortedTroves.contains( aliceAddress )
 
-    //   assert.equal(status_Before, 1)  // 1: Active
-    //   assert.isTrue(isInSortedList_Before)
+            assert.equal( status_Before, 1 )  // 1: Active
+            assert.isTrue( isInSortedList_Before )
 
-    //   await assertRevert(
-    //     borrowerOperations.adjustTrove(th._100pct, aliceColl, aliceDebt, true, alice, alice, { from: alice }),
-    //     'BorrowerOps: An operation that would result in ICR < MCR is not permitted'
-    //   )
-    // })
+            await testHelper.assertRevert(
+                contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl, aliceDebt, true, aliceAddress, aliceAddress, { onAccount: alice } ),
+                'BorrowerOps: An operation that would result in ICR < MCR is not permitted'
+            )
+        } )
 
+        it( "adjustTrove(): Reverts if requested debt increase and amount is zero", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, 0, true, aliceAddress, aliceAddress, { onAccount: alice } ),
+                'BorrowerOps: Debt increase requires non-zero debtChange' )
+        } )
+
+        it( "adjustTrove(): Reverts if requested coll withdrawal and ae is sent", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, dec( 1, 'ae' ), dec( 100, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 3, 'ae' ) } ), 'BorrowerOperations: Cannot withdraw and add coll' )
+        } )
+
+        it( "adjustTrove(): Reverts if it’s zero adjustment", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, 0, false, aliceAddress, aliceAddress, { onAccount: alice } ),
+                'BorrowerOps: There must be either a collateral change or a debt change' )
+        } )
+
+        it( "adjustTrove(): Reverts if requested coll withdrawal is greater than trove's collateral", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: alice } } )
+
+            const aliceColl = await getTroveEntireColl( aliceAddress )
+
+            // Requested coll withdrawal > coll in the trove
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + BigInt( 1 ), 0, false, aliceAddress, aliceAddress, { onAccount: alice } ) , "Can not withdraw more coll than the available" )
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + dec( 37, 'ae' ), 0, false, bobAddress, bobAddress, { onAccount: bob } ) , "Can not withdraw more coll than the available")
+        } )
+
+        it( "adjustTrove(): Reverts if borrower has insufficient LUSD balance to cover his debt repayment", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: B } } )
+            const bobDebt = await getTroveEntireDebt( BAddress )
+
+            // Bob transfers some LUSD to C
+            await contracts.aeusdToken.transfer( CAddress, dec( 10, 18 ), { onAccount: B } )
+
+            //Confirm B's LUSD balance is less than 50 LUSD
+            const B_LUSDBal = await contracts.aeusdToken.balance( BAddress )
+            assert.isTrue( B_LUSDBal < bobDebt )
+
+            const repayLUSDPromise_B = contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, bobDebt, false, BAddress, BAddress, { onAccount: B } )
+
+            // B attempts to repay all his debt
+            await assertRevert( repayLUSDPromise_B, "SafeMath: subtraction is negative" )
+        } )
+
+        it( "Internal _adjustTrove(): reverts when op is a withdrawal and _borrower param is not the msg.sender", async () => {
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: D } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 10, 18 ), extraParams: { onAccount: bob } } )
+
+            const txPromise_A = contracts.borrowerOperations.original.methods.call_internal_adjust_loan( aliceAddress, dec( 1, 18 ), dec( 1, 18 ), true, aliceAddress, aliceAddress, { onAccount: bob } )
+            await assertRevert( txPromise_A, "Max fee percentage must be between 0.5% and 100%" ) // Original test message is different, but I checked the message there is wrong as original assertRevert methods do not check the error message argument
+            const txPromise_B = contracts.borrowerOperations.original.methods.call_internal_adjust_loan( bobAddress, dec( 1, 18 ), dec( 1, 18 ), true, aliceAddress, aliceAddress, { onAccount: D } )
+            await assertRevert( txPromise_B, "Max fee percentage must be between 0.5% and 100%" )
+            const txPromise_C = contracts.borrowerOperations.original.methods.call_internal_adjust_loan( CAddress, dec( 1, 18 ), dec( 1, 18 ), true, aliceAddress, aliceAddress, { onAccount: bob } )
+            await assertRevert( txPromise_C, "Max fee percentage must be between 0.5% and 100%" )
+        } )
 
         // --- openTrove(1) ---
         it( "openTrove(): emits a TroveUpdated event with the correct collateral and debt", async () => {
