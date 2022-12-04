@@ -7,3 +7,21 @@
         , lower_hint: option(address)
         ): IBorrowerOperations.adjust_trove() =
         adjust_trove'(borrower, coll_withdrawal, aeusd_change, is_debt_increase, upper_hint, lower_hint, 0)
+
+    entrypoint  call_internal_get_new_icr_from_trove_change(
+        coll: int
+        , debt: int
+        , coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool
+        , price: int
+        ): int = get_new_icr_from_trove_change(coll,debt, coll_change, is_coll_increase, debt_change, is_debt_increase, price)
+
+    entrypoint call_internal_get_new_tcr_from_trove_change (
+          coll_change: int
+        , is_coll_increase: bool
+        , debt_change: int
+        , is_debt_increase: bool
+        , price: int ): int = get_new_tcr_from_trove_change(coll_change, is_coll_increase, debt_change, is_debt_increase, price)
+
