@@ -25,6 +25,33 @@ describe( 'Borrower Operations', () => {
         const getTroveEntireColl = async ( trove ) => testHelper.getTroveEntireColl( contracts, trove )
         const getTroveEntireDebt = async ( trove ) => testHelper.getTroveEntireDebt( contracts, trove )
         const getTroveStake = async ( trove ) => testHelper.getTroveStake( contracts, trove )
+
+        const testsCollChange = async ( collChange, isCollIncrease, debtChange, isDebtIncrease ) => {
+            const troveColl = dec( 1000, 'ae' )
+            const troveTotalDebt = dec( 100000, 18 )
+            const troveLUSDAmount = await getOpenTroveLUSDAmount( troveTotalDebt )
+            await contracts.borrowerOperations.original.methods.open_trove( testHelper._100pct, troveLUSDAmount, aliceAddress, aliceAddress, { onAccount: alice, amount: troveColl } )
+            await contracts.borrowerOperations.original.methods.open_trove( testHelper._100pct, troveLUSDAmount, bobAddress, bobAddress, { onAccount: bob, amount: troveColl } )
+
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+
+            const liquidationTx = await contracts.troveManager.original.methods.liquidate( bobAddress )
+            assert.isFalse( await contracts.sortedTroves.contains( bobAddress ) )
+
+            const [ liquidatedDebt, liquidatedColl, gasComp, aeGasComp ] = testHelper.getEmittedLiquidationValues( liquidationTx )
+
+            await contracts.priceFeedTestnet.set_price( dec( 200, 18 ) )
+            const price = await contracts.priceFeedTestnet.get_price()
+
+            // --- TEST ---
+            //const collChange = 0
+            //const debtChange = 0
+            const newTCR = await contracts.borrowerOperations.call_internal_get_new_tcr_from_trove_change( collChange, isCollIncrease, debtChange, isDebtIncrease, price )
+
+            const expectedTCR = ( troveColl + liquidatedColl + ( isCollIncrease ? collChange : - collChange ) ) * price / ( troveTotalDebt + liquidatedDebt + ( isDebtIncrease ? debtChange : - debtChange ) ) 
+
+            assert.equal( newTCR, expectedTCR )
+        }
         
         let LUSD_GAS_COMPENSATION
         let MIN_NET_DEBT
@@ -81,31 +108,267 @@ describe( 'Borrower Operations', () => {
 
         // --- addColl() ---
 
-        // it("addColl(): reverts when top-up would leave trove with ICR < MCR", async () => {
-        //     // alice creates a Trove and adds first collateral
-        //     await openTrove({ ICR: testHelper.dec(2, 18) , extraParams: { onAccount: alice }})
-        //     await openTrove({ ICR: testHelper.dec(10, 18), extraParams: { onAccount: bob   }})
+        it( "addColl(): reverts when top-up would leave trove with ICR < MCR", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: testHelper.dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: testHelper.dec( 10, 18 ), extraParams: { onAccount: bob   } } )
 
-        //     const price0 = await contracts.priceFeedTestnet.get_price()
-        //     console.log('price0:' + price0)
-            
-        //     // Price drops
-        //     await contracts.priceFeedTestnet.set_price(testHelper.dec(100, 18))
-        //     const price = await contracts.priceFeedTestnet.get_price()
+            // Price drops
+            await contracts.priceFeedTestnet.set_price( testHelper.dec( 100, 18 ) )
+            const price = await contracts.priceFeedTestnet.get_price()
 
-        //     console.log('price :' + price)
-            
-        //     assert.isFalse(await contracts.troveManager.check_recovery_mode(price))
-        //     assert.isTrue((await contracts.troveManager.get_current_icr(aliceAddress, price)) < (testHelper.dec(110, 16)))
+            assert.isFalse( await contracts.troveManager.check_recovery_mode( price ) )
+            assert.isTrue( ( await contracts.troveManager.get_current_icr( aliceAddress, price ) ) < ( testHelper.dec( 110, 16 ) ) )
 
-        //     const collTopUp = 1  // 1 wei top up
+            const collTopUp = 1  // 1 wei top up
 
-        //     contracts.borrowerOperations.add_coll(aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp })
-        //     const txPromise = contracts.borrowerOperations.original.methods.add_coll(aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp })
-        //     await testHelper.assertRevert(txPromise, 
-        //                                "BorrowerOps: An operation that would result in ICR < MCR is not permitted")
-        //     // gives an 'v3/transactions error: Invalid tx' error
+            contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } )
+            const txPromise = contracts.borrowerOperations.original.methods.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } )
+            await testHelper.assertRevert( txPromise, 
+                "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )
+
+        } )
+
+        it( "addColl(): Increases the activePool ETH and raw ae balance by correct amount", async () => {
+            const { collateral: aliceColl } = await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            const activePool_ETH_Before = await contracts.activePool.get_ae()
+            const activePool_Rawae_Before = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+
+            assert.equal( activePool_ETH_Before, aliceColl )
+            assert.equal( activePool_Rawae_Before, aliceColl )
+
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const activePool_ETH_After = await contracts.activePool.get_ae()
+            const activePool_Rawae_After = await contracts.sdk.getBalance( contracts.activePool.accountAddress )
+            assert.equal( activePool_ETH_After, aliceColl + dec( 1, 'ae' ) )
+            assert.equal( activePool_Rawae_After, aliceColl + dec( 1, 'ae' ) )
+        } )
+
+        it( "addColl(), active Trove: adds the correct collateral amount to the Trove", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            const alice_Trove_Before = await contracts.troveManager.troves( aliceAddress )
+            const coll_before = alice_Trove_Before.coll
+            const status_Before = alice_Trove_Before.status
+
+            // check status before
+            assert.isTrue( 'Active' in status_Before )
+
+            // Alice adds second collateral
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            const alice_Trove_After = await contracts.troveManager.troves( aliceAddress )
+            const coll_After = alice_Trove_After.coll
+            const status_After = alice_Trove_After.status
+
+            // check coll increases by correct amount,and status remains active
+            assert.equal( coll_After, coll_before + dec( 1, 'ae' ) )
+            assert.isTrue( 'Active' in status_After )
+        } )
+
+        it( "addColl(), active Trove: Trove is in sortedList before and after", async () => {
+            // alice creates a Trove and adds first collateral
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            // check Alice is in list before
+            const aliceTroveInList_Before = await contracts.sortedTroves.contains( aliceAddress )
+            const listIsEmpty_Before = await contracts.sortedTroves.is_empty()
+            assert.isTrue( aliceTroveInList_Before )
+            assert.isFalse( listIsEmpty_Before )
+
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
+
+            // check Alice is still in list after
+            const aliceTroveInList_After = await contracts.sortedTroves.contains( aliceAddress )
+            const listIsEmpty_After = await contracts.sortedTroves.is_empty()
+            assert.isTrue( aliceTroveInList_After )
+            assert.isFalse( listIsEmpty_After )
+        } )
+
+        it( "addColl(), active Trove: updates the stake and updates the total stakes", async () => {
+            //  Alice creates initial Trove with 1 ae
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+
+            const alice_Trove_Before = await contracts.troveManager.troves( aliceAddress )
+            const alice_Stake_Before = alice_Trove_Before.stake
+            const totalStakes_Before = ( await contracts.troveManager.total_stakes() )
+
+            assert.equal( totalStakes_Before, alice_Stake_Before )
+
+            // Alice tops up Trove collateral with 2 ae
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 2, 'ae' ) } )
+
+            // Check stake and total stakes get updated
+            const alice_Trove_After = await contracts.troveManager.troves( aliceAddress )
+            const alice_Stake_After = alice_Trove_After.stake
+            const totalStakes_After = ( await contracts.troveManager.total_stakes() )
+
+            assert.equal( alice_Stake_After, alice_Stake_Before + dec( 2, 'ae' ) )
+            assert.equal( totalStakes_After, totalStakes_Before + dec( 2, 'ae' ) )
+        } )
+
+        it( "addColl(), active Trove: applies pending rewards and updates user's L_ETH, L_LUSDDebt snapshots", async () => {
+            // --- SETUP ---
+
+            const { collateral: aliceCollBefore, totalDebt: aliceDebtBefore } = await openTrove( { extraLUSDAmount: dec( 15000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            const { collateral: bobCollBefore, totalDebt: bobDebtBefore } = await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+            await openTrove( { extraLUSDAmount: dec( 5000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: C } } )
+
+            // --- TEST ---
+
+            // price drops to 1ETH:100LUSD, reducing Carol's ICR below MCR
+            await contracts.priceFeedTestnet.set_price( '100000000000000000000' )
+
+            // Liquidate C's Trove,
+            const tx = await contracts.troveManager.liquidate( CAddress, { onAccount: A /* owner */ } )
+
+            assert.isFalse( await contracts.sortedTroves.contains( CAddress ) )
+
+            const L_ETH = await contracts.troveManager.l_ae()
+            const L_LUSDDebt = await contracts.troveManager.l_aeusd_debt()
+
+            // check Alice and Bob's reward snapshots are zero before they alter their Troves
+            const alice_rewardSnapshot_Before = await contracts.troveManager.reward_snapshots( aliceAddress )
+            const alice_ETHrewardSnapshot_Before = alice_rewardSnapshot_Before.ae
+            const alice_LUSDDebtRewardSnapshot_Before = alice_rewardSnapshot_Before.aeusd_debt
+
+            const bob_rewardSnapshot_Before = await contracts.troveManager.reward_snapshots( bobAddress )
+            const bob_ETHrewardSnapshot_Before = bob_rewardSnapshot_Before.ae
+            const bob_LUSDDebtRewardSnapshot_Before = bob_rewardSnapshot_Before.aeusd_debt
+
+            assert.equal( alice_ETHrewardSnapshot_Before, 0 )
+            assert.equal( alice_LUSDDebtRewardSnapshot_Before, 0 )
+            assert.equal( bob_ETHrewardSnapshot_Before, 0 )
+            assert.equal( bob_LUSDDebtRewardSnapshot_Before, 0 )
+
+            const alicePendingETHReward = await contracts.troveManager.get_pending_ae_reward( aliceAddress )
+            const bobPendingETHReward = await contracts.troveManager.get_pending_ae_reward( bobAddress )
+            const alicePendingLUSDDebtReward = await contracts.troveManager.get_pending_aeusd_debt_reward( aliceAddress )
+            const bobPendingLUSDDebtReward = await contracts.troveManager.get_pending_aeusd_debt_reward( bobAddress )
+            var reward
+            for ( reward of [ alicePendingETHReward, bobPendingETHReward, alicePendingLUSDDebtReward, bobPendingLUSDDebtReward ] ) {
+                assert.isTrue( reward > 0 )
+            }
+
+            // Alice and Bob top up their Troves
+            const aliceTopUp = dec( 5, 'ae' )
+            const bobTopUp = dec( 1, 'ae' )
+
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: aliceTopUp } )
+            await contracts.borrowerOperations.add_coll( bobAddress, bobAddress, { onAccount: bob, amount: bobTopUp } )
+
+            // Check that both alice and Bob have had pending rewards applied in addition to their top-ups. 
+            const aliceNewColl = await getTroveEntireColl( aliceAddress )
+            const aliceNewDebt = await getTroveEntireDebt( aliceAddress )
+            const bobNewColl = await getTroveEntireColl( bobAddress )
+            const bobNewDebt = await getTroveEntireDebt( bobAddress )
+
+            assert.equal( aliceNewColl, aliceCollBefore + alicePendingETHReward + aliceTopUp )
+            assert.equal( aliceNewDebt, aliceDebtBefore + alicePendingLUSDDebtReward )
+            assert.equal( bobNewColl, bobCollBefore + bobPendingETHReward + bobTopUp )
+            assert.equal( bobNewDebt, bobDebtBefore + bobPendingLUSDDebtReward )
+
+            /* Check that both Alice and Bob's snapshots of the rewards-per-unit-staked metrics should be updated
+        to the latest amounts of L_ETH and L_LUSDDebt */
+            const alice_rewardSnapshot_After = await contracts.troveManager.reward_snapshots( aliceAddress )
+            const alice_ETHrewardSnapshot_After = alice_rewardSnapshot_After.ae
+            const alice_LUSDDebtRewardSnapshot_After = alice_rewardSnapshot_After.aeusd_debt
+
+            const bob_rewardSnapshot_After = await contracts.troveManager.reward_snapshots( bobAddress )
+            const bob_ETHrewardSnapshot_After = bob_rewardSnapshot_After.ae
+            const bob_LUSDDebtRewardSnapshot_After = bob_rewardSnapshot_After.aeusd_debt
+
+            assert.isAtMost( testHelper.getDifference( alice_ETHrewardSnapshot_After, L_ETH ), 100 )
+            assert.isAtMost( testHelper.getDifference( alice_LUSDDebtRewardSnapshot_After, L_LUSDDebt ), 100 )
+            assert.isAtMost( testHelper.getDifference( bob_ETHrewardSnapshot_After, L_ETH ), 100 )
+            assert.isAtMost( testHelper.getDifference( bob_LUSDDebtRewardSnapshot_After, L_LUSDDebt ), 100 )
+        } )
+
+        // -- next test was commented, TODO: should be migrated ?
+        // it("addColl(), active Trove: adds the right corrected stake after liquidations have occured", async () => {
+        //  // TODO - check stake updates for addColl/withdrawColl/adustTrove ---
+
+        //   // --- SETUP ---
+        //   // A,B,C add 15/5/5 ETH, withdraw 100/100/900 LUSD
+        //   await borrowerOperations.openTrove(testHelper._100pct, dec(100, 18), aliceAddress, aliceAddress, { onAccount: alice, amount: dec(15, 'ae') })
+        //   await borrowerOperations.openTrove(testHelper._100pct, dec(100, 18), bobAddress, bobAddress, { onAccount: bob, amount: dec(4, 'ae') })
+        //   await borrowerOperations.openTrove(testHelper._100pct, dec(900, 18), CAddress, CAddress, { onAccount: C, amount: dec(5, 'ae') })
+
+        //   await borrowerOperations.openTrove(testHelper._100pct, 0, dennis, dennis, { onAccount: dennis, amount: dec(1, 'ae') })
+        //   // --- TEST ---
+
+        //   // price drops to 1ETH:100LUSD, reducing Carol's ICR below MCR
+        //   await contracts.priceFeedTestnet.set_price('100000000000000000000');
+
+        //   // close Carol's Trove, liquidating her 5 ae and 900LUSD.
+        //   await troveManager.liquidate(CAddress, { onAccount: A /* owner */ });
+
+        //   // dennis tops up his trove by 1 ETH
+        //   await contracts.borrowerOperations.add_coll(dennis, dennis, { onAccount: dennis, amount: dec(1, 'ae') })
+
+        //   /* Check that Dennis's recorded stake is the right corrected stake, less than his collateral. A corrected 
+        //   stake is given by the formula: 
+
+        //   s = totalStakesSnapshot / totalCollateralSnapshot 
+
+        //   where snapshots are the amounts immediately after the last liquidation.  After Carol's liquidation, 
+        //   the ETH onAccount her Trove has now become the totalPendingETHReward. So:
+
+        //   totalStakes = (alice_Stake + bob_Stake + dennis_orig_stake ) = (15 + 4 + 1) =  20 EtestHelper.
+        //   totalCollateral = (alice_Collateral + bob_Collateral + dennis_orig_coll + totalPendingETHReward) = (15 + 4 + 1 + 5)  = 25 EtestHelper.
+
+        //   Therefore, as Dennis adds 1 ae collateral, his corrected stake should be:  s = 2 * (20 / 25 ) = 1.6 ETH */
+        //   const dennis_Trove = await contracts.troveManager.troves(dennis)
+
+        //   const dennis_Stake = dennis_Trove[2]
+        //   console.log(dennis_Stake.toString())
+
+        //   assert.isAtMost(testHelper.getDifference(dennis_Stake), 100)
         // })
+
+        it( "addColl(), reverts if trove is non-existent or closed", async () => {
+            // A, B open troves
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: bob } } )
+
+            // C attempts to add collateral to her non-existent trove
+
+            await testHelper.assertRevert( contracts.borrowerOperations.add_coll( CAddress, CAddress, { onAccount: C, amount: dec( 1, 'ae' ) } ),
+                "Trove does not exist or is closed"
+            )
+
+            // Price drops
+            await contracts.priceFeedTestnet.set_price( dec( 100, 18 ) )
+
+            // Bob gets liquidated
+            await contracts.troveManager.liquidate( bobAddress )
+
+            assert.isFalse( await contracts.sortedTroves.contains( bobAddress ) )
+
+            // Bob attempts to add collateral to his closed trove
+            await testHelper.assertRevert( contracts.borrowerOperations.add_coll( bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
+                "Trove does not exist or is closed" )
+        } )
+
+        it( 'addColl(): can add collateral in Recovery Mode', async () => {
+            await openTrove( { ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
+            const aliceCollBefore = await getTroveEntireColl( aliceAddress )
+            assert.isFalse( await testHelper.checkRecoveryMode( contracts ) )
+
+            await contracts.priceFeedTestnet.set_price( '105000000000000000000' )
+
+            assert.isTrue( await testHelper.checkRecoveryMode( contracts ) )
+
+            const collTopUp = dec( 1, 'ae' )
+            await contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } )
+
+            // Check Alice's collateral
+            const aliceCollAfter = ( await contracts.troveManager.troves( aliceAddress ) ).coll
+            assert.equal( aliceCollAfter, aliceCollBefore + collTopUp )
+        } )
 
         // --- withdrawColl() ---
 
@@ -1633,7 +1896,7 @@ describe( 'Borrower Operations', () => {
             await contracts.borrowerOperations.adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, aliceAddress, aliceAddress, { onAccount: alice, amount: dec( 1, 'ae' ) } )
 
             await testHelper.assertRevert( contracts.borrowerOperations.original.methods. adjust_trove( testHelper._100pct, 0, dec( 50, 18 ), true, AAddress, AAddress, { onAccount: A, amount: dec( 1, 'ae' ) } ),
-                                           "BorrowerOps: Trove does not exist or is closed" )
+                "BorrowerOps: Trove does not exist or is closed" )
         } )
 
         it( "adjustTrove(): reverts in Recovery Mode when the adjustment would reduce the TCR", async () => {
@@ -1889,7 +2152,7 @@ describe( 'Borrower Operations', () => {
 
             // Bob attempts an adjustment that would repay 1 wei more than his debt
             await testHelper.assertRevert(
-                contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, remainingDebt + BigInt(1), false, bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
+                contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, 0, remainingDebt + BigInt( 1 ), false, bobAddress, bobAddress, { onAccount: bob, amount: dec( 1, 'ae' ) } ),
                 "SafeMath: subtraction is negative"
             )
         } )
@@ -1902,7 +2165,7 @@ describe( 'Borrower Operations', () => {
             const cColl = await getTroveEntireColl( CAddress )
 
             // C attempts an adjustment that would withdraw 1 wei more than her ETH
-            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, cColl + BigInt(1), 0, true, CAddress, CAddress, { onAccount: C } ),
+            await testHelper.assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, cColl + BigInt( 1 ), 0, true, CAddress, CAddress, { onAccount: C } ),
                 "BorrowerOps: Debt increase requires non-zero debtChange" )
         } )
 
@@ -1921,7 +2184,7 @@ describe( 'Borrower Operations', () => {
         } )
 
         it( "adjustTrove(): With 0 coll change, doesnt change borrower's coll or ActivePool coll", async () => {
-            await openTrove( { extraLUSDAmount:  dec( 10000, 18 ) , ICR:  dec( 2, 18 ) , extraParams: { onAccount: alice } } )
+            await openTrove( { extraLUSDAmount: dec( 10000, 18 ), ICR: dec( 2, 18 ), extraParams: { onAccount: alice } } )
 
             const aliceCollBefore = await getTroveEntireColl( aliceAddress )
             const activePoolCollBefore = await contracts.activePool.get_ae()
@@ -2225,8 +2488,8 @@ describe( 'Borrower Operations', () => {
             const aliceColl = await getTroveEntireColl( aliceAddress )
 
             // Requested coll withdrawal > coll in the trove
-            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + BigInt( 1 ), 0, false, aliceAddress, aliceAddress, { onAccount: alice } ) , "Can not withdraw more coll than the available" )
-            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + dec( 37, 'ae' ), 0, false, bobAddress, bobAddress, { onAccount: bob } ) , "Can not withdraw more coll than the available")
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + BigInt( 1 ), 0, false, aliceAddress, aliceAddress, { onAccount: alice } ), "Can not withdraw more coll than the available" )
+            await assertRevert( contracts.borrowerOperations.original.methods.adjust_trove( testHelper._100pct, aliceColl + dec( 37, 'ae' ), 0, false, bobAddress, bobAddress, { onAccount: bob } ), "Can not withdraw more coll than the available" )
         } )
 
         it( "adjustTrove(): Reverts if borrower has insufficient LUSD balance to cover his debt repayment", async () => {
@@ -3085,6 +3348,187 @@ describe( 'Borrower Operations', () => {
             const alice_aesusd_TokenBalance_After = await contracts.aeusdToken.balance( aliceAddress )
             assert.equal( alice_aesusd_TokenBalance_After, dec( 10000, 18 ) )
         } )   
-        
+
+        describe( "getNewICRFromTroveChange() returns the correct ICR", async () => {
+            0, 0
+            it( "collChange = 0, debtChange = 0", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = 0
+                const debtChange = 0
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, true, price ) )
+                assert.equal( newICR, 2000000000000000000 )
+            } )
+
+            // 0, +ve
+            it( "collChange = 0, debtChange is positive", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = 0
+                const debtChange = dec( 50, 18 )
+
+                const newICR = await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, true, price )
+                assert.isAtMost( testHelper.getDifference( newICR, 1333333333333333333n ), 100 )
+            } )
+
+            // 0, -ve
+            it( "collChange = 0, debtChange is negative", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = 0
+                const debtChange = dec( 50, 18 )
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, false, price ) ).toString()
+                assert.equal( newICR, '4000000000000000000' )
+            } )
+
+            // +ve, 0
+            it( "collChange is positive, debtChange is 0", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 1, 'ae' )
+                const debtChange = 0
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, true, price ) ).toString()
+                assert.equal( newICR, '4000000000000000000' )
+            } )
+
+            // -ve, 0
+            it( "collChange is negative, debtChange is 0", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 5, 17 )
+                const debtChange = 0
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, false, debtChange, true, price ) ).toString()
+                assert.equal( newICR, '1000000000000000000' )
+            } )
+
+            // -ve, -ve
+            it( "collChange is negative, debtChange is negative", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 5, 17 )
+                const debtChange = dec( 50, 18 )
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, false, debtChange, false, price ) ).toString()
+                assert.equal( newICR, '2000000000000000000' )
+            } )
+
+            // +ve, +ve 
+            it( "collChange is positive, debtChange is positive", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 1, 'ae' )
+                const debtChange = dec( 100, 18 )
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, true, price ) ).toString()
+                assert.equal( newICR, '2000000000000000000' )
+            } )
+
+            // +ve, -ve
+            it( "collChange is positive, debtChange is negative", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 1, 'ae' )
+                const debtChange = dec( 50, 18 )
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, true, debtChange, false, price ) ).toString()
+                assert.equal( newICR, '8000000000000000000' )
+            } )
+
+            // -ve, +ve
+            it( "collChange is negative, debtChange is positive", async () => {
+                const price = await contracts.priceFeedTestnet.get_price()
+                const initialColl = dec( 1, 'ae' )
+                const initialDebt = dec( 100, 18 )
+                const collChange = dec( 5, 17 )
+                const debtChange = dec( 100, 18 )
+
+                const newICR = ( await contracts.borrowerOperations.call_internal_get_new_icr_from_trove_change( initialColl, initialDebt, collChange, false, debtChange, true, price ) ).toString()
+                assert.equal( newICR, '500000000000000000' )
+            } )
+        } )
+
+        // --- getCompositeDebt ---
+
+        it( "getCompositeDebt(): returns debt + gas comp", async () => {
+            const res1 = await contracts.borrowerOperations.get_composite_debt( '0' )
+            assert.equal( res1, LUSD_GAS_COMPENSATION.toString() )
+
+            const res2 = await contracts.borrowerOperations.get_composite_debt( dec( 90, 18 ) )
+            testHelper.assertIsApproximatelyEqual( res2, LUSD_GAS_COMPENSATION + dec( 90, 18 ) )
+
+            const res3 = await contracts.borrowerOperations.get_composite_debt( dec( 24423422357345049, 12 ) )
+            testHelper.assertIsApproximatelyEqual( res3, LUSD_GAS_COMPENSATION + dec( 24423422357345049, 12 ) )
+        } )
+
+        //  --- getNewTCRFromTroveChange  - (external wrapper in Tester contract calls internal function) ---
+
+        describe( "getNewTCRFromTroveChange() returns the correct TCR", async () => {
+
+            // 0, 0
+            it( "collChange = 0, debtChange = 0", async () => {
+                // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( 0n, true,  0n, true )
+            } )
+
+            // 0, +ve
+            it( "collChange = 0, debtChange is positive", async () => {
+                // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( 0n, true, dec( 200, 18 ), true )
+            } )
+
+            // 0, -ve
+            it( "collChange = 0, debtChange is negative", async () => {
+                // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( 0n,  true, dec( 100, 18 ), false )
+            } )
+
+            // +ve, 0
+            it( "collChange is positive, debtChange is 0", async () => {
+                // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( dec( 2, 'ae' ), true, 0n, true )
+            } )
+
+            // -ve, 0
+            it( "collChange is negative, debtChange is 0", async () => {
+            // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( dec( 1, 18 ), false,  0n, true )
+            } )
+
+            // -ve, -ve
+            it( "collChange is negative, debtChange is negative", async () => {
+            // --- SETUP --- Create a Liquity instance with an Active Pool and pending rewards (Default Pool)
+                await testsCollChange( dec( 1, 18 ), false,  dec( 100, 18 ), false )
+            } )
+
+            // +ve, +ve 
+            it( "collChange is positive, debtChange is positive", async () => {
+                await testsCollChange( dec( 1, 'ae' ), true, dec( 100, 18 ), true )
+            } )
+
+            // +ve, -ve
+            it( "collChange is positive, debtChange is negative", async () => {
+                await testsCollChange( dec( 1, 'ae' ), true, dec( 100, 18 ), false )
+            } )
+
+            // -ve, +ve
+            it( "collChange is negative, debtChange is positive", async () => {
+                const debtChange = await getNetBorrowingAmount( dec( 200, 18 ) )                
+                await testsCollChange( dec( 1, 18 ), false, debtChange, true )
+            } )
+
+        } )
+
     } )
 } )
