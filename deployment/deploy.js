@@ -98,7 +98,7 @@ const deploy = async ( secretKey, network, compiler ) => {
             ),
         ]
     //for ( const dep of deployments ) { await dep() }
-    await deployments[4]()
+    await deployments[1]()
 }
 
 module.exports = {
