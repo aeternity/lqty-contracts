@@ -58,9 +58,9 @@ const testHelper =  {
         return compositeDebt
     },
     
-    getOpenTroveTotalDebt: async function( contracts, lusdAmount ) {
-        const fee = await contracts.troveManager.get_borrowing_fee( lusdAmount )
-        const compositeDebt = await this.getCompositeDebt( contracts, lusdAmount )
+    getOpenTroveTotalDebt: async function( contracts, aeusdAmount ) {
+        const fee = await contracts.troveManager.get_borrowing_fee( aeusdAmount )
+        const compositeDebt = await this.getCompositeDebt( contracts, aeusdAmount )
         // console.log('fee: ' + fee )
         return compositeDebt + fee
     },
@@ -76,7 +76,7 @@ const testHelper =  {
     },    
 
     // Given a composite debt, returns the actual debt  - i.e. subtracts the virtual debt.
-    // Virtual debt = 50 LUSD.
+    // Virtual debt = 50 AEUSD.
     getActualDebtFromComposite: async function( compositeDebt, contracts ) {
         const issuedDebt = await contracts.troveManager.get_actual_debt_from_composite( compositeDebt )
         return issuedDebt
@@ -101,7 +101,7 @@ const testHelper =  {
                 return BigInt( ( tx.decodedEvents[i].args[1] ).toString() )
             }
         }
-        throw ( "The transaction logs do not contain an LUSDBorrowingFeePaid event" )
+        throw ( "The transaction logs do not contain an AEUSDBorrowingFeePaid event" )
     },    
 
     // getAEUSDFeeFromAEUSDBorrowingEvent: function(tx) {
@@ -114,9 +114,9 @@ const testHelper =  {
                 const liquidatedDebt = liquidationTx.decodedEvents[i].args[0]
                 const liquidatedColl = liquidationTx.decodedEvents[i].args[1]
                 const collGasComp = liquidationTx.decodedEvents[i].args[2]
-                const lusdGasComp = liquidationTx.decodedEvents[i].args[3]
+                const aeusdGasComp = liquidationTx.decodedEvents[i].args[3]
 
-                return [ liquidatedDebt, liquidatedColl, collGasComp, lusdGasComp ]
+                return [ liquidatedDebt, liquidatedColl, collGasComp, aeusdGasComp ]
             }
         }
         throw ( "The transaction decodedEvents do not contain a liquidation event" )
@@ -137,15 +137,15 @@ const testHelper =  {
     
     openTrove: async function( contracts, {
         maxFeePercentage,
-        extraLUSDAmount,
+        extraAEUSDAmount,
         upperHint,
         lowerHint,
         ICR,
         extraParams
     } ) {
         if ( !maxFeePercentage ) maxFeePercentage = this._100pct
-        if ( !extraLUSDAmount ) extraLUSDAmount = BigInt( 0 )
-        else if ( typeof extraLUSDAmount == 'string' ) extraLUSDAmount = BigInt( extraLUSDAmount )
+        if ( !extraAEUSDAmount ) extraAEUSDAmount = BigInt( 0 )
+        else if ( typeof extraAEUSDAmount == 'string' ) extraAEUSDAmount = BigInt( extraAEUSDAmount )
         if ( !upperHint ) upperHint = this.ZERO_ADDRESS
         if ( !lowerHint ) lowerHint = this.ZERO_ADDRESS
 	
@@ -153,14 +153,14 @@ const testHelper =  {
             (
                 await this.getNetBorrowingAmount( contracts, await contracts.borrowerOperations.min_net_debt() )
             ) + BigInt( 1 ) // add 1 to avoid rounding issues
-        const lusdAmount = MIN_DEBT + extraLUSDAmount
+        const aeusdAmount = MIN_DEBT + extraAEUSDAmount
 
         //console.log( MIN_DEBT )
 	
         if ( !ICR && !extraParams.amount ) ICR = BigInt( this.dec( 15, 17 ) ) // 150%
         else if ( typeof ICR == 'string' ) ICR = BigInt( ICR )
 
-        const totalDebt = await this.getOpenTroveTotalDebt( contracts, lusdAmount )
+        const totalDebt = await this.getOpenTroveTotalDebt( contracts, aeusdAmount )
         const netDebt = await this.getActualDebtFromComposite( totalDebt, contracts )
 
         const price = await contracts.priceFeedTestnet.get_price()
@@ -169,8 +169,8 @@ const testHelper =  {
             extraParams.amount = ICR * totalDebt / price
         }
 
-        // let aeusd_fee = await contracts.troveManager.get_borrowing_fee(lusdAmount)
-        // let icr = await contracts.borrowerOperations.get_Icr(extraParams.amount, lusdAmount + aeusd_fee , price)
+        // let aeusd_fee = await contracts.troveManager.get_borrowing_fee(aeusdAmount)
+        // let icr = await contracts.borrowerOperations.get_Icr(extraParams.amount, aeusdAmount + aeusd_fee , price)
         // const mcr = await contracts.borrowerOperations.mcr()
 
         // console.log('icr         ' + icr.toString() )
@@ -180,22 +180,22 @@ const testHelper =  {
         // console.log('mcr:        ' + mcr )
         // console.log('min_debt:   ' + MIN_DEBT )
         // console.log('totaldebt:  ' + totalDebt )
-        // console.log('lsudAmount: ' + lusdAmount )
+        // console.log('lsudAmount: ' + aeusdAmount )
         // console.log('ICR:        ' + ICR)
         // console.log('price:      ' + price)		
         // console.log('value:      ' + extraParams.amount)
 
         // console.log( maxFeePercentage )
-        // console.log(lusdAmount)
+        // console.log(aeusdAmount)
         // console.log(extraParams)
 	
-        const tx = await contracts.borrowerOperations.original.methods.open_trove( maxFeePercentage, lusdAmount, upperHint, lowerHint, extraParams )
+        const tx = await contracts.borrowerOperations.original.methods.open_trove( maxFeePercentage, aeusdAmount, upperHint, lowerHint, extraParams )
 
         //console.log(tx.decodedEvents)
         //Object.keys(tx).forEach((prop)=> console.log(prop + ':' + tx[prop]));
 	
         return {
-            lusdAmount,
+            aeusdAmount,
             netDebt,
             totalDebt,
             ICR,
@@ -204,7 +204,7 @@ const testHelper =  {
         }
     },
 
-    getOpenTroveLUSDAmount: async function( contracts, totalDebt ) {
+    getOpenTroveAEUSDAmount: async function( contracts, totalDebt ) {
         const actualDebt = await this.getActualDebtFromComposite( totalDebt, contracts )
         return this.getNetBorrowingAmount( contracts, actualDebt )
     },
@@ -301,7 +301,16 @@ const timeValues = {
     MINUTES_IN_ONE_MONTH  : 60 * 24 * 30,
     MINUTES_IN_ONE_YEAR   : 60 * 24 * 365
 }
+const withFee = async( f ) => {
+    const {
+        result: { gasPrice, gasUsed },
+        txData:{ tx: { fee },  }
+    } = await f()
+    return gasPrice * BigInt( gasUsed ) + fee
+}
+
 module.exports = {
+    withFee,
     randDecayFactor,
     expandDecimals,
     reduceDecimals,

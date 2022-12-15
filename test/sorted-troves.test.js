@@ -97,7 +97,7 @@ describe( 'SortedTroves Tests', () => {
         } )
 
         it( 'contains(): returns false for addresses that opened and then closed a trove', async () => {
-            await openTrove( { ICR: dec( 1000, 18 ), extraLUSDAmount: dec( 3000, 18 ), extraParams: { onAccount: whale } } )
+            await openTrove( { ICR: dec( 1000, 18 ), extraAEUSDAmount: dec( 3000, 18 ), extraParams: { onAccount: whale } } )
 
             await openTrove( { ICR: dec( 150, 16 ), extraParams: { onAccount: alice } } )
             await openTrove( { ICR: dec( 20, 18 ), extraParams: { onAccount: bob } } )
@@ -127,7 +127,7 @@ describe( 'SortedTroves Tests', () => {
         //
         // true for addresses that opened -> closed -> opened a trove
         it( 'contains(): returns true for addresses that opened, closed and then re-opened a trove', async () => {
-            await openTrove( { ICR: dec( 1000, 18 ), extraLUSDAmount: dec( 3000, 18 ), extraParams: { onAccount: whale } } )
+            await openTrove( { ICR: dec( 1000, 18 ), extraAEUSDAmount: dec( 3000, 18 ), extraParams: { onAccount: whale } } )
 
             await openTrove( { ICR: dec( 150, 16 ), extraParams: { onAccount: alice } } )
             await openTrove( { ICR: dec( 20, 18 ), extraParams: { onAccount: bob } } )

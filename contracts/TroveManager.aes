@@ -372,9 +372,9 @@ contract TroveManager =
           else
             get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, price
                                                        , aeusd_in_stab_pool, trove_array )
-						       
+
 	totals
-      )		
+      )
 
     stateful function batch_liquidate_troves(trove_array: list(address)) = with_addresses((addresses) =>
         require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
@@ -405,7 +405,7 @@ contract TroveManager =
           , default_pool
           , totals.total_debt_to_redistribute
           , totals.total_coll_to_redistribute
-          ) 
+          )
         if (totals.total_coll_surplus > 0)
             active_pool.send_ae(addresses.coll_surplus_pool.address, totals.total_coll_surplus)
 
@@ -798,7 +798,7 @@ contract TroveManager =
                   , addresses )
             else totals // break if the loop reaches a Trove with ICR >= MCR*/
 
-    // Liquidate one trove, in Recovery Mode. 
+    // Liquidate one trove, in Recovery Mode.
     stateful function
       liquidate_recovery_mode: (
           /*activePool:*/ IActivePool
@@ -1002,7 +1002,7 @@ contract TroveManager =
         ) = with_addresses((addresses) =>
           let active_coll = addresses.active_pool.get_ae()
           let liquidated_coll = addresses.default_pool.get_ae()
-          let total_collateral_snapshot = SafeMath.sub(active_coll,coll_remainder + liquidated_coll)
+          let total_collateral_snapshot = SafeMath.sub(active_coll,coll_remainder) + liquidated_coll
           let total_stakes_snapshot = state.total_stakes
           put (state{
             total_collateral_snapshot = total_collateral_snapshot
@@ -1512,7 +1512,7 @@ contract TroveManager =
         (Map.lookup_default(borrower,state.troves,null_trove())).coll
 
     entrypoint get_last_fee_operation_time(): int =
-    	state.last_fee_operation_time  
+    	state.last_fee_operation_time
 
     //------------------------------------------------------------------------------
     // CONSTRAINTS
@@ -1531,7 +1531,7 @@ contract TroveManager =
       , status = NonExistent
       , array_index = -1
       }
-      
+
     function require_trove_is_active(borrower: address) = require(
         Map.lookup_default(borrower,state.troves,null_trove()).status == Active,
         "TroveManager: Trove does not exist or is closed"
