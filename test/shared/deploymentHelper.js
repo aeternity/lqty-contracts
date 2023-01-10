@@ -114,12 +114,13 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
         trove_manager       : contracts.troveManager.address,
         stability_pool      : contracts.stabilityPool.address,
         default_pool        : contracts.defaultPool.address,
+        coll_surplus_pool   : contracts.collSurplusPool.address       
     } )
 
     await contracts.collSurplusPool.set_addresses( {
         borrower_operations : contracts.borrowerOperations.address,
         trove_manager       : contracts.troveManager.address,
-        active_pool         : contracts.activePool.address,
+        active_pool         : contracts.activePool.address
     } )
 
     await contracts.stabilityPool.set_addresses( {

@@ -1,0 +1,33 @@
+
+
+* call stack
+
+** contracts.stabilityPool.provide_to_sp( spDeposit, null, { onAccount: alice } )
+
+** pay_out_lqty_gains(addresses.community_issuance, Call.caller, front_end_opt)
+   function pay_out_lqty_gains(community_issuance: ICommunityIssuance, depositor: address, front_end_opt: option(address)) =
+   
+   depositor -> alice
+   
+** community_issuance.send_lqty(depositor, depositor_lqty_gain)
+
+ depositor -> alice
+ 
+**  addresses.lqty_token.transfer(account, lqty_amount)
+
+   account -> depositor -> alice
+
+** transfer_allowance(Call.caller, recipient, amount)
+
+     recipient -> account ..-> alice
+     Call.caller -> communityissuance
+
+** internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(Map.lookup_default({from_account=sender, for_account=Call.caller}, state.allowances, 0), amount))
+
+
+from_account ->  communityissuance
+for_account -> alice
+
+**  let allowance = require_allowance(allowance_accounts, value_change)
+
+

@@ -7,7 +7,7 @@ include "./interfaces/ITroveManager.aes"
 include "./interfaces/IActivePool.aes"
 include "./dependencies/Utils.aes"
 
-contract CollSurplusPool =
+payable contract CollSurplusPool =
     //------------------------------------------------------------------------------
     // DATA & STATE
     //------------------------------------------------------------------------------

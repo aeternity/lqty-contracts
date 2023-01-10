@@ -1,7 +1,7 @@
 const Decimal = require( "decimal.js" )
 const { expect, assert } = require( 'chai' )
 
-const MoneyValues = {
+const moneyValues = {
     // negative_5e17: "-" + web3.utils.toWei('500', 'finney'),
     // negative_1e18: "-" + web3.utils.toWei('1', 'ether'),
     // negative_10e18: "-" + web3.utils.toWei('10', 'ether'),
@@ -20,7 +20,7 @@ const MoneyValues = {
 
     _MCR    : BigInt( '1100000000000000000' ),
     _ICR100 : BigInt( '1000000000000000000' ),
-    _CCR    : BigInt( '1500000000000000000' ),
+    _CCR    : BigInt( '1500000000000000000' )
 }
 
 const testHelper =  {
@@ -50,7 +50,7 @@ const testHelper =  {
     // Subtracts the borrowing fee
     getNetBorrowingAmount: async function ( contracts, debtWithFee ) {
         const borrowingRate = await contracts.troveManager.get_borrowing_rate_with_decay()
-        return BigInt( debtWithFee ) * MoneyValues._1e18BN / ( MoneyValues._1e18BN + borrowingRate )
+        return BigInt( debtWithFee ) * moneyValues._1e18BN / ( moneyValues._1e18BN + borrowingRate )
     },
 
     getCompositeDebt: async function( contracts, debt ) {
@@ -94,6 +94,16 @@ const testHelper =  {
         }
         throw ( `The transaction logs do not contain event ${eventName}` )
     },
+
+    printEvents: function( tx ) {
+        for ( let i = 0; i < tx.decodedEvents.length; i++ ) {
+            console.log('event: ' + tx.decodedEvents[i].name)
+            for ( let j = 0; j <  tx.decodedEvents[i].args.length; j++) {
+              console.log('  arg:' + tx.decodedEvents[i].args[j])
+            }
+        }
+    },
+
 
     getAEUSDFeeFromAEUSDBorrowingEvent: function( tx ) {
         for ( let i = 0; i < tx.decodedEvents.length; i++ ) {
@@ -245,7 +255,15 @@ const testHelper =  {
             // console.log("tx failed")
             assert.include( err.message, message )
         }
-    },        
+    },
+
+    applyLiquidationFee: function ( ae_amount ) {
+        return ae_amount * this.dec( 995, 15 ) / moneyValues._1e18BN
+    },
+
+    gasUsed: function ( tx ) {
+        return BigInt(tx.txData.gasUsed)
+    },
 
 }
 const makeBN = ( num, precision ) => {
@@ -308,5 +326,6 @@ module.exports = {
     testHelper,
     timeValues,
     makeBN,
-    expectToRevert
+    expectToRevert,
+    moneyValues
 }

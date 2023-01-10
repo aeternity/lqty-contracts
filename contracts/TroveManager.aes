@@ -353,29 +353,6 @@ contract TroveManager =
         require_trove_is_active(borrower)
         batch_liquidate_troves([borrower])
 
-    stateful entrypoint batch_liquidate_troves_aux(trove_array: list(address)) = with_addresses((addresses) =>
-        require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
-
-        let active_pool = addresses.active_pool
-        let default_pool = addresses.default_pool
-        let stability_pool = addresses.stability_pool
-
-        let price = addresses.price_feed.fetch_price()
-        let aeusd_in_stab_pool = stability_pool.get_total_aeusd_deposits()
-        let recovery_mode_at_start = check_recovery_mode'(price)
-
-        // Perform the appropriate liquidation sequence - tally values and obtain their totals.
-        let totals =
-          if (recovery_mode_at_start)
-            get_total_from_batch_liquidate_recovery_mode( active_pool, default_pool, price
-                                                        , aeusd_in_stab_pool, trove_array )
-          else
-            get_totals_from_batch_liquidate_normal_mode(active_pool, default_pool, price
-                                                       , aeusd_in_stab_pool, trove_array )
-						       
-	totals
-      )		
-
     stateful function batch_liquidate_troves(trove_array: list(address)) = with_addresses((addresses) =>
         require(List.length(trove_array) != 0, "TroveManager: Calldata address array must not be empty")
 

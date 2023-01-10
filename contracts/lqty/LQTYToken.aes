@@ -182,7 +182,8 @@ contract LQTYToken =
       require_valid_recipient(recipient)
 
       internal_transfer(sender, recipient, amount)
-      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
+      // TODO: ? internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(Map.lookup_default({from_account=sender, for_account=Call.caller}, state.allowances, 0), amount))
+      change_allowance(sender, SafeMath.add(Map.lookup_default({from_account=sender, for_account=Call.caller}, state.allowances, 0), amount))
 
     stateful entrypoint change_allowance(for_account: address, value_change: int) : unit =
       if (is_first_year())

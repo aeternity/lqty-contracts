@@ -145,7 +145,7 @@ include "./dependencies/LiquityMath.aes"
  * The product P (and snapshot P_t) is re-used, as the ratio P/P_t tracks a deposit's depletion due to liquidations.
  *
  */
-contract StabilityPool =
+payable contract StabilityPool =
     //------------------------------------------------------------------------------
     // CONSTANTS
     //------------------------------------------------------------------------------
@@ -312,7 +312,7 @@ contract StabilityPool =
           Some(deposit) | deposit.initial_value == 0 => 0
           Some(deposit) =>
             //TODO: we assume deposit_snapshots[depositor] has sth?
-            let snapshots = state.deposit_snapshots[depositor]
+            let snapshots = Map.lookup_default(depositor, state.deposit_snapshots, no_snapshots())
             get_ae_gain_from_snapshots(deposit.initial_value, snapshots)
 
     function get_ae_gain_from_snapshots(initial_deposit: int, snapshots: snapshots): int =
@@ -322,11 +322,11 @@ contract StabilityPool =
         * If the gain spans no scale change, the second portion will be 0.
         */
         let first_portion = SafeMath.sub(
-            state.epoch_to_scale_to_sum[(snapshots.epoch,snapshots.scale)]
+            Map.lookup_default((snapshots.epoch,snapshots.scale),state.epoch_to_scale_to_sum,0)
           , snapshots.s
           )
         let second_portion = SafeMath.div(
-            state.epoch_to_scale_to_sum[(snapshots.epoch,SafeMath.add(snapshots.scale,1))]
+            Map.lookup_default((snapshots.epoch,SafeMath.add(snapshots.scale,1)),state.epoch_to_scale_to_sum,0)
           , scale_factor()
           )
 
@@ -408,7 +408,7 @@ contract StabilityPool =
               //TODO: is this partial evaluation ok?
               Some(front_end_tag) => state.front_ends[front_end_tag].kickback_rate
 
-            let snapshots = state.deposit_snapshots[depositor]
+            let snapshots = Map.lookup_default(depositor, state.deposit_snapshots, no_snapshots()) 
 
             SafeMath.div(
                 kickback_rate * get_lqty_gain_from_snapshots(deposit.initial_value, snapshots)
@@ -888,7 +888,7 @@ contract StabilityPool =
     * Return the user's compounded deposit. Given by the formula:  d = d0 * P/P(0)
     * where P(0) is the depositor's snapshot of the product P, taken when they last updated their deposit.
     */
-    function get_compounded_aeusd_deposit(depositor: address): int =
+    entrypoint get_compounded_aeusd_deposit(depositor: address): int =
         let initial_deposit = Map.lookup_default(depositor,state.deposits,no_deposit()).initial_value
         if(initial_deposit == 0) 0
         else

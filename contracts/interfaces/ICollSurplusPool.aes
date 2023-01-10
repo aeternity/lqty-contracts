@@ -27,3 +27,5 @@ contract interface ICollSurplusPool =
     stateful entrypoint account_surplus: (address /*account*/, int /*amount*/) => unit
 
     stateful entrypoint claim_coll: (address /*account*/) =>  unit
+
+    payable stateful entrypoint receive_ae: () => unit

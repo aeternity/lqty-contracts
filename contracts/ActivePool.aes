@@ -21,6 +21,7 @@ payable contract ActivePool =
         , trove_manager: ITroveManager
         , stability_pool: IStabilityPool
         , default_pool: IDefaultPool
+        , coll_surplus_pool: ICollSurplusPool
         }
     record state = {
           owner: option(address)
@@ -58,17 +59,23 @@ payable contract ActivePool =
 
     entrypoint get_aeusd_debt(): int = state.aeusd_debt
 
-    stateful entrypoint send_ae(account: address, amount: int) =
-        //ensure the rights to send ae
-        require_caller_is_bo_or_trovem_or_sp()
+    stateful entrypoint send_ae(account: address, amount: int) = with_addresses( (addresses) =>
+             //ensure the rights to send ae
+             require_caller_is_bo_or_trovem_or_sp()
 
-        let ae = SafeMath.sub(state.ae, amount)
-        put(state{ ae = ae })
+             let ae = SafeMath.sub(state.ae, amount)
+             put(state{ ae = ae })
 
-        Chain.event( ActivePoolAEBalanceUpdated(ae))
-        Chain.event(AeSent(account, amount))
+             Chain.event( ActivePoolAEBalanceUpdated(ae))
+             Chain.event(AeSent(account, amount))
 
-        Chain.spend(account,amount)
+             if(Address.is_contract(account) && Address.to_contract(account) == addresses.default_pool)
+               addresses.default_pool.receive_ae( value = amount )
+             elif(Address.is_contract(account) && Address.to_contract(account) == addresses.coll_surplus_pool)
+               addresses.coll_surplus_pool.receive_ae( value = amount )
+             else 
+               Chain.spend(account,amount)
+        )
 
     stateful entrypoint send_ae_default_pool(amount: int) = with_addresses( (addresses) =>
              //ensure the rights to send ae
