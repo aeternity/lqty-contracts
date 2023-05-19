@@ -1,7 +1,8 @@
 version: '3'
 services:
   node:
-    image: 'aeternity/aeternity:master-bundle'
+    image: 'aeternity/aeternity:v6.6.0-bundle'
+    #image: 'aeternity/aeternity:master-bundle'
     #image: 'thepiwo/aeternity:m1-devmode'
     hostname: node
     environment:
