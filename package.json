@@ -5,7 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "deploy": "node ./src/index.js",
+    "price-service": "node ./utils/price-service.js",
+    "price-service:debug": "node --inspect-brk ./utils/price-service.js",
     "test": "mocha ./test/*.test.js --timeout 0 --exit",
+    "test:borrower-operations": "mocha ./test/borrower-operations.test --timeout 0 --exit",
     "test:debug": "node --inspect-brk node_modules/.bin/mocha ./test/*.test.js --timeout 0 --exit -b",
     "lint": "eslint ."
   },
