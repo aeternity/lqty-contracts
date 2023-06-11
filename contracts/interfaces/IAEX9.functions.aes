@@ -2,7 +2,8 @@
 
     record meta_info = { name : string , symbol : string , decimals : int }
 
-
+    entrypoint owner: () => address
+    
     //This function returns meta information associated with the token contract.
     entrypoint meta_info: () => meta_info
 
@@ -15,10 +16,8 @@
     //or the account has never had balance and is still unknown to the contract.
     entrypoint balance: (address) => option(int)
 
-    //This function returns the amount which for_account is still allowed to withdraw from from_account,
-    //where record allowance_accounts = { from_account: address, for_account: address }.
-    //If no allowance for this combination of accounts exists, None is returned.
-    entrypoint allowance: (allowance_accounts) => option(int)
+    //entrypoint balance: () => map(address, int)
+
 
     // This function allows transfer of value amount of tokens to to_account address and MUST fire the Transfer event.
     // The function SHOULD abort if the Call.caller's account balance does not have enough tokens to spend.
@@ -27,6 +26,10 @@
     // @param value The number of tokens to send from the sender to the recipient
     stateful entrypoint transfer: (address /*to_account*/, int /*value*/) => unit
 
+    //This function returns the amount which for_account is still allowed to withdraw from from_account,
+    //where record allowance_accounts = { from_account: address, for_account: address }.
+    //If no allowance for this combination of accounts exists, None is returned.
+    entrypoint allowance: (allowance_accounts) => option(int)
 
     // Allows for_account to withdraw from your account multiple times, up to the value amount.
     // If this function is called again it overwrites the current allowance with value.
@@ -47,4 +50,5 @@
     // @param recipient The recipient of the transfer
     // @param amount The amount of the transfer
     stateful entrypoint transfer_allowance: ( address /*sender*/, address /*recipient*/, int /*amount*/) => unit
+
 

@@ -32,7 +32,8 @@ contract AEUSDToken =
     //------------------------------------------------------------------------------
 
     record state =
-        { total_supply : int
+        { owner: address
+        , total_supply : int
         , balances     : balances
         , allowances   : allowances
         , trove_manager: ITroveManager
@@ -73,7 +74,8 @@ contract AEUSDToken =
         Chain.event(TroveManagerAddressChanged(trove_manager))
         Chain.event(StabilityPoolAddressChanged(stability_pool))
         Chain.event(BorrowerOperationsAddressChanged(borrower_operations))
-        {  total_supply = 0
+        {  owner = Call.caller
+         , total_supply = 0
          , balances = {}
          , allowances = {}
          , trove_manager = trove_manager

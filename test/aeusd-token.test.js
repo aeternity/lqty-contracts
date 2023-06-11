@@ -104,6 +104,10 @@ describe( 'AEUSD Token', () => {
             assert.equal( meta_info.decimals, 18 )                    
         } )
 
+        it( "owner(): returns the token's owner", async () => {
+            const owner = await contracts.aeusdToken.owner()
+        } )
+
         it( "allowance(): returns an account's spending allowance for another account's balance", async () => {
             await contracts.aeusdToken.create_allowance( aliceAddress, 100, { onAccount: bob } )
 

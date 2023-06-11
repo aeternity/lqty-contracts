@@ -1,3 +1,6 @@
+
+    entrypoint owner() = state.owner
+    
     // Get the balances state
     entrypoint balances() : balances = state.balances
 
