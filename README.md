@@ -20,7 +20,7 @@ Run: `make test`
 
 Open 3 troves, change AE price and liquidate one in Emergency mode, debt and collateral is porportionally redistributed between rest of open troves.
 
-Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo 1_ calculations.xlsx)
+Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo1.xlsx)
 
 How to run it: `make demo1`
 
@@ -28,7 +28,7 @@ How to run it: `make demo1`
 
 Check LQTY token handling, LQTY token holder invest in LQTY pool and get rewards from open and withrdaw AEUSD operations
 
-Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo 2_ LQTY Tokens demo.xlsx)
+Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo2.xlsx)
 
 How to run it: `make demo2`
 
@@ -37,7 +37,7 @@ How to run it: `make demo2`
 Check stability pool, user invest AEUSD in stability pool and get rewards from liquidations.
 
 
-Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo 3_ Stability Pool demo.xlsx)
+Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/blob/main/docs/demos/demo3.xlsx)
 
 
 How to run it: `make demo3`
