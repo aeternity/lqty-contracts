@@ -154,8 +154,7 @@ describe( 'Borrower Operations', () => {
             //     assert.isTrue((await contracts.troveManager.get_current_icr(aliceAddress, price)) < (testHelper.dec(110, 16)))
 
             const collTopUp = 1  // 1 wei top up
-
-            contracts.borrowerOperations.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } )
+            
             const txPromise = contracts.borrowerOperations.original.methods.add_coll( aliceAddress, aliceAddress, { onAccount: alice, amount: collTopUp } )
             await testHelper.assertRevert( txPromise, 
                 "BorrowerOps: An operation that would result in ICR < MCR is not permitted" )

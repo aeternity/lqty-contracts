@@ -1,4 +1,5 @@
 const Decimal = require( "decimal.js" )
+const BigNumber = require('bignumber.js');
 const { expect, assert } = require( 'chai' )
 
 const MoneyValues = {
@@ -21,6 +22,8 @@ const MoneyValues = {
     _MCR    : BigInt( '1100000000000000000' ),
     _ICR100 : BigInt( '1000000000000000000' ),
     _CCR    : BigInt( '1500000000000000000' ),
+
+    get: function ( n ) { return BigNumber (BigNumber(n) / BigNumber(this._1e18BN)) }
 }
 
 const testHelper =  {
@@ -317,5 +320,6 @@ module.exports = {
     testHelper,
     timeValues,
     makeBN,
-    expectToRevert
+    expectToRevert,
+    MoneyValues
 }

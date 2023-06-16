@@ -154,7 +154,8 @@ contract LQTYToken =
       require_valid_recipient(recipient)
 
       // Otherwise, standard transfer functionality
-      transfer_allowance(Call.caller, recipient, amount)
+      internal_transfer(Call.caller, recipient, amount)
+      
 
     // TODO: is this part of AEX9 Allowance extension, maybe put it in common code ?
     entrypoint allowance(allowance_accounts : allowance_accounts) : option(int) =
@@ -175,7 +176,7 @@ contract LQTYToken =
       Chain.event(Allowance(Call.caller, for_account, value))
     
 
-    // TODO: transfer_from in solidity contract
+    // TODO: transferFrom in solidity contract
     stateful entrypoint transfer_allowance(sender: address,  recipient: address, amount: int) : unit =
       if (is_first_year())
       	 require_caller_is_not_multisig()
@@ -183,7 +184,7 @@ contract LQTYToken =
       require_valid_recipient(recipient)
 
       internal_transfer(sender, recipient, amount)
-      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.add(state.allowances[{from_account=sender, for_account=Call.caller}], amount))
+      internal_change_allowance({from_account=sender, for_account=Call.caller}, SafeMath.subWithMsg(state.allowances[{from_account=sender, for_account=Call.caller} = 0], amount, "ERC20: transfer amount exceeds allowance")) 
 
     stateful entrypoint change_allowance(for_account: address, value_change: int) : unit =
       if (is_first_year())

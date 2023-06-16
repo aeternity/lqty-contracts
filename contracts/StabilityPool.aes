@@ -145,7 +145,7 @@ include "./dependencies/LiquityMath.aes"
  * The product P (and snapshot P_t) is re-used, as the ratio P/P_t tracks a deposit's depletion due to liquidations.
  *
  */
-contract StabilityPool =
+payable contract StabilityPool =
     //------------------------------------------------------------------------------
     // CONSTANTS
     //------------------------------------------------------------------------------
@@ -322,11 +322,11 @@ contract StabilityPool =
         * If the gain spans no scale change, the second portion will be 0.
         */
         let first_portion = SafeMath.sub(
-            state.epoch_to_scale_to_sum[(snapshots.epoch,snapshots.scale)]
+            state.epoch_to_scale_to_sum[(snapshots.epoch,snapshots.scale) = 0]
           , snapshots.s
           )
         let second_portion = SafeMath.div(
-            state.epoch_to_scale_to_sum[(snapshots.epoch,SafeMath.add(snapshots.scale,1))]
+            state.epoch_to_scale_to_sum[(snapshots.epoch,SafeMath.add(snapshots.scale,1)) = 0]
           , scale_factor()
           )
 
@@ -352,11 +352,11 @@ contract StabilityPool =
           let front_end_share = SafeMath.sub(Utils.decimal_precision(),kickback_rate)
 
           //TODO: be sure this should revert if no snapshot entry
-          let snapshots = state.front_end_snapshots[front_end]
+          let snapshots = state.front_end_snapshots[front_end = no_snapshots()]
 
           SafeMath.div(
               front_end_share * get_lqty_gain_from_snapshots(front_end_stake, snapshots)
-            , Utils.decimal_precision()
+              , Utils.decimal_precision()
             )
 
     function get_lqty_gain_from_snapshots(initial_stake: int, snapshots: snapshots): int =
@@ -371,11 +371,11 @@ contract StabilityPool =
         let p_snapshot = snapshots.p
 
         let first_portion = SafeMath.sub(
-            state.epoch_to_scale_to_g[(epoch_snapshot , scale_snapshot)]
+            Map.lookup_default((epoch_snapshot , scale_snapshot),state.epoch_to_scale_to_g,0)
           , g_snapshot
           )
         let second_portion = SafeMath.div(
-            state.epoch_to_scale_to_g[(epoch_snapshot , scale_snapshot + 1)]
+            Map.lookup_default((epoch_snapshot , scale_snapshot + 1),state.epoch_to_scale_to_g,0)
           , scale_factor()
           )
 
@@ -406,7 +406,7 @@ contract StabilityPool =
             let kickback_rate = switch(deposit.front_end_tag)
               None => Utils.decimal_precision()
               //TODO: is this partial evaluation ok?
-              Some(front_end_tag) => state.front_ends[front_end_tag].kickback_rate
+              Some(front_end_tag) => Map.lookup_default(front_end_tag,state.front_ends,no_front_end()).kickback_rate // state.front_ends[front_end_tag].kickback_rate
 
             let snapshots = state.deposit_snapshots[depositor]
 
@@ -698,7 +698,9 @@ contract StabilityPool =
         // Burn the debt that was successfully offset
         addresses.aeusd_token.burn(Contract.address, debt_to_offset)
 
-        addresses.active_pool.send_ae(Contract.address, coll_to_add)
+
+        put(state{ ae @ ae = SafeMath.add(ae, coll_to_add) })
+        addresses.active_pool.send_ae(Contract.address, coll_to_add) 
       )
 
     stateful function decrease_aeusd(amount: int) =
@@ -824,6 +826,7 @@ contract StabilityPool =
 
         // Pay out depositor's LQTY gain
         let depositor_lqty_gain = get_depositor_lqty_gain(depositor)
+        
         community_issuance.send_lqty(depositor, depositor_lqty_gain)
         Chain.event(LQTYPaidToDepositor(depositor, depositor_lqty_gain))
 

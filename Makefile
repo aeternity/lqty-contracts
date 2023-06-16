@@ -16,3 +16,10 @@ follow-log:
 test-all: 
 	npm run test
 test: test-all
+demo1: 
+	npm test -- --grep "demo 1"
+demo2: 
+	npm test -- --grep "demo 2"
+demo3: 
+	npm test -- --grep "demo 3"
+
