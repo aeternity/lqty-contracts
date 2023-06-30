@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "deploy": "node ./src/index.js",
+    "oracle": "node ./src/oracle.js",      
     "test": "mocha ./test/*.test.js --timeout 0 --exit",
     "test:debug": "node --inspect-brk node_modules/.bin/mocha ./test/*.test.js --timeout 0 --exit -b",
     "lint": "eslint ."
@@ -17,7 +18,8 @@
     "axios": "^0.24.0",
     "crypto": "^1.0.1",
     "dotenv-flow": "^3.2.0",
-    "fs": "^0.0.1-security"
+    "fs": "^0.0.1-security",
+    "ae-oracle-pricefeed": "git://github.com/aeternity/ae-oracle-pricefeed"
   },
   "devDependencies": {
     "@babel/cli": "^7.15.4",
@@ -34,6 +36,7 @@
     "eslint": "^8.2.0",
     "eslint-plugin-import": "^2.20.0",
     "eslint-plugin-jest": "^23.6.0",
-    "mocha": "^9.0.3"
+    "mocha": "^9.0.3",
+    "ae-oracle-pricefeed": "git://github.com/aeternity/ae-oracle-pricefeed"      
   }
 }

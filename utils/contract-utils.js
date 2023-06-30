@@ -208,8 +208,42 @@ const beforeEachWithSnapshot = ( str, work, options = {} ) => {
     } )
 }
 
+const beforeAfterEachWithSnapshot = ( str, work, workAfter, options = {} ) => {
+    let snapshotHeight = -1
+    let client = client
+    before( "initial snapshot: " + str, async () => {
+        if ( !client ) {
+            client = await createSdkInstance( options.wallet, options.network, options.compiler )
+        }
+        console.debug( "running initial work for snapshot... " )
+        await work()
+        console.debug( "initial work ... DONE " )
+        // get the snapshot height
+        if ( client.selectedNodeName === 'local' ) {
+            snapshotHeight = await client.height()
+            console.debug( `snapshot block height: ${snapshotHeight}` )
+            await awaitOneKeyBlock( client )
+        }
+    } )
+
+    afterEach( "reset to snapshot", async () => {
+        await workAfter()
+        if ( client.selectedNodeName !== 'local' ) {
+            return
+        }
+        const currentBlockHeight = await client.height()
+        if ( currentBlockHeight > snapshotHeight ) {
+            await get( `${getNodeUrl( client )}/rollback?height=${snapshotHeight}` )
+            console.debug( `rolled back to ${snapshotHeight}` )
+            await awaitOneKeyBlock( client )
+        }
+    } )
+}
+
+
 module.exports = {
     beforeEachWithSnapshot,
+    beforeAfterEachWithSnapshot,
     deployContract,
     createSdkInstance,
     getContractContent,

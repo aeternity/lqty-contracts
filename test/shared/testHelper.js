@@ -275,7 +275,7 @@ const checkOnlyNumericChars = ( input ) => {
     }
 }
 
-export const reduceDecimals = ( val, decimals ) => BigNumber( val ).shiftedBy( -decimals )
+const reduceDecimals = ( val, decimals ) => BigNumber( val ).shiftedBy( -decimals )
 const randDecayFactor = ( min, max ) => {
     const amount = Math.random() * ( max - min ) + min
     return  expandDecimals( amount.toFixed( 18 ), 18 )
