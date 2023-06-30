@@ -1,0 +1,70 @@
+@compiler >= 6
+include "../../contracts/dependencies/Utils.aes"
+include "Option.aes"
+include "String.aes"
+/*import "../Interfaces/IPriceFeed.sol";*/
+
+/*
+* PriceFeed placeholder for testnet and development. The price is simply set manually and saved in a state
+* variable. The contract does not connect to a live Chainlink price feed.
+*/
+contract PriceFeedOracleTestnet =
+    type o = oracle(string, string)
+    type oq = oracle_query(string, string)
+
+    record state = { price: int
+                   , oracle: o
+                   }
+
+    entrypoint init(o: o) = { price = 200 * 1000000000000000000
+                            , oracle = o
+                            }
+
+
+    /*// --- Functions ---*/
+
+    // View price getter for simplicity in tests
+    entrypoint get_price() = state.price
+
+    entrypoint fetch_price() =
+        // Fire an event just like the mainnet version would.
+        // This lets the subgraph rely on events to get the latest price even when developing locally.
+        Chain.event( LastGoodPriceUpdated(state.price))
+        state.price
+
+    /*// Manual external price setter.*/
+    stateful entrypoint set_price(price: int): bool =
+        put( state{ price = price })
+        true
+
+    /*// Manual external price setter.*/
+    stateful entrypoint set_price_oracle(query: oq): bool =
+        Option.match(false, (p) =>
+                              put (state { price = convert(p) })
+                              true
+          , Oracle.get_answer(state.oracle, query))
+
+    function convert(p: string) : int =
+      let tokens = String.tokens(p, ".")
+      if (List.length(tokens) == 1)
+         Option.force_msg(String.to_int(p), "Failed conversion to integer") * Utils.decimal_precision()
+      elif (List.length(tokens) == 2)
+         let ns = List.get(0, tokens)
+         let n = Option.force_msg(String.to_int(ns), "Failed conversion to integer of the full number")
+         let ds = List.get(1, tokens)
+         let dl = String.length(ds)
+         let d = Option.force_msg(String.to_int(ds), "Faied conversion to integer of the decimal part")
+         
+         let n2 = n * (10 ^ dl) + d // problem if dl is zero !
+         if (dl < 18)
+           n2 * (10 ^ (18 - dl))
+         elif (dl > 18) // lost precision, need to discuss precision issues ?
+           n2 / (10 ^ (dl - 18))
+         else
+           n2
+      else
+         abort("Failed conversion: more than one dot decimal symbol")
+         
+    // --- Events ---
+    datatype event = LastGoodPriceUpdated(int /*last_good_price*/)
+

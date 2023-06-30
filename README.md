@@ -41,3 +41,11 @@ Calculation are verified in [sheet](https://github.com/aeternity/lqty-contracts/
 
 
 How to run it: `make demo3`
+
+### Demo oracle
+
+Simple test using the oracle [ae-oracle-pricefeed](git://github.com/aeternity/ae-oracle-pricefeed) to get AE/USD price from [coingeko](https://www.coingecko.com/), also installs a service [price-service](./price-service/price-service.js) which periodically pools new prices from the oracle and injects it in loan app. The frequency of the price refreshing can be modified with the environment variable `AWAIT_TIMEOUT_SECONDS`, the default frequency is 10 seconds.
+
+Run it: `make demo-oracle`
+
+There is also a variation [price-service-query.js](./price-service/price-service.js), where the pooling service does not inject directly the price from the oracle, instead when the query is ready it sends the `query id` to the loan app, and the loan app gets directly the price using the `query id`.

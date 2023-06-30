@@ -22,4 +22,7 @@ demo2:
 	npm test -- --grep "demo 2"
 demo3: 
 	npm test -- --grep "demo 3"
+demo-oracle:
+	npm test -- --grep "demo oracle"
+
 
