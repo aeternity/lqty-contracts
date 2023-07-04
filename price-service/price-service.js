@@ -4,11 +4,13 @@ const { createSdkInstance, getFilesystem, getContractContent, deployContract } =
 const PriceFeedOracle = require('ae-oracle-pricefeed/src/operator/priceFeedOracle');
 const Decimal = require( "decimal.js" );
 const { NETWORKS } = require( '../config/network.js' );
-const wallets = require( '../config/wallets.json' );
 
 const DEFAULT_NETWORK_NAME = process.env.DEFAULT_NETWORK_NAME || 'local';
 var CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const AWAIT_TIMEOUT_SECONDS = process.env.AWAIT_TIMEOUT_SECONDS  || 10;
+const WALLET_FILE = process.env.WALLET  || '../config/wallet-price-feed.json';
+
+const wallet = require(WALLET_FILE);
 
 var priceFeedContract;
 var priceFeedOracle;
@@ -39,7 +41,7 @@ async function setup() {
     priceFeedOracle = new PriceFeedOracle();
     process.env.NODE_URL = NETWORKS[DEFAULT_NETWORK_NAME]['nodeUrl'];
 
-    await priceFeedOracle.init(wallets.defaultWallets[0]);
+    await priceFeedOracle.init(wallet);
     await priceFeedOracle.register();
     await priceFeedOracle.startPolling();
 
