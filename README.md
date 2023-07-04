@@ -49,3 +49,5 @@ Simple test using the oracle [ae-oracle-pricefeed](git://github.com/aeternity/ae
 Run it: `make demo-oracle`
 
 There is also a variation [price-service-query.js](./price-service/price-service.js), where the pooling service does not inject directly the price from the oracle, instead when the query is ready it sends the `query id` to the loan app, and the loan app gets directly the price using the `query id`.
+
+The aeternity node can be conigured via `DEFAULT_NETWORK_NAME=<<mainnet|testnet|local>>` env variable, and the price feed variable ``CONTRACT_ADDRESS` should point to `PriceFeedTestnet` contract.
