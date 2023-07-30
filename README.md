@@ -57,7 +57,8 @@ Service that periodically pools new prices [ae-oracle-pricefeed](git://github.co
 
 The frequency of the price refreshing can be modified with the environment variable `AWAIT_TIMEOUT_SECONDS`, the default frequency is 10 seconds.
 
+Run it locally: `DEFAULT_NETWORK_NAME=local WALLET_FILE='./config/wallet-price-feed.json' CONTRACT_ADDRESS='ct_2Eee1pWXH6HFTeuTGTFMxMwKg6ydGea4jbo1MQdG7Y9ViuS6BD' AWAIT_TIMEOUT_SECONDS=60 node price-service/price-service.js`
 
-Run it: `DEFAULT_NETWORK_NAME=local WALLET_FILE='./config/wallet-price-feed.json' CONTRACT_ADDRESS='ct_2Eee1pWXH6HFTeuTGTFMxMwKg6ydGea4jbo1MQdG7Y9ViuS6BD' AWAIT_TIMEOUT_SECONDS=60 node price-service/price-service.js`
+Run it testnet: `DEFAULT_NETWORK_NAME=testnet WALLET_FILE='./config/wallet-pricefeed-testnet.json' CONTRACT_ADDRESS='ct_6xfAeDxJdYHe6H7WTigtW5p3UHDhRr27PMmUg2iJpDfcCiqJb' AWAIT_TIMEOUT_SECONDS=60 node price-service/price-service.js`
 
 
