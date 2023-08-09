@@ -13,7 +13,8 @@ const WALLET_FILE = process.env.WALLET  || '../config/wallet-price-feed.json';
 const wallet = require(WALLET_FILE);
 
 var priceFeedContract;
-var priceFeedOracle;
+var oracle;
+
 
 async function deployPriceFeedTestnet() {
     const sdk = await createSdkInstance();
@@ -38,14 +39,23 @@ async function setup() {
         omitUnknown     : true
     } );
 
-    priceFeedOracle = new PriceFeedOracle();
-    process.env.NODE_URL = NETWORKS[DEFAULT_NETWORK_NAME]['nodeUrl'];
+    if (!process.env.ORACLE_ID) {
+        console.log("Installing new oracle ...");
+        var priceFeedOracle = new PriceFeedOracle();
+        process.env.NODE_URL = NETWORKS[DEFAULT_NETWORK_NAME]['nodeUrl'];
 
-    await priceFeedOracle.init(wallet);
-    await priceFeedOracle.register();
-    await priceFeedOracle.startPolling();
+        await priceFeedOracle.init(wallet);
+        await priceFeedOracle.register();
+        await priceFeedOracle.startPolling();
 
-    console.log("Oracle id", priceFeedOracle.oracle.id);
+        oracle = priceFeedOracle.oracle;
+    } else {
+        console.log("Getting already existing oracle oracle ...");
+        oracle = await sdk.getOracleObject(process.env.ORACLE_ID);
+    }
+
+    console.log("Oracle id", oracle.id);
+
 }
 
 async function setPrice( price ) {
@@ -64,14 +74,14 @@ async function getPrice( ) {
 async function updatePrice() {
     try {
         // query price to oracle
-        const query = await priceFeedOracle.oracle.postQuery('usd', {
-            queryFee: priceFeedOracle.oracle.queryFee,
+        const query = await oracle.postQuery('usd', {
+            queryFee: 200000000000000,
             // optionally specify ttl
             // queryTtl: {type: 'delta', value: 20},
             // responseTtl: {type: 'delta', value: 20},
         });
 
-        const response = await query.pollForResponse();
+        const response = await query.pollForResponse({ interval: 6000 });
         
         console.log( 'Current AE/USD price:', String(response.decode()) );
 
