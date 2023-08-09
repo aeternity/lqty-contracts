@@ -163,6 +163,8 @@ contract LQTYStaking =
     // --- getters ---
 
     entrypoint f_aeusd() = state.f_aeusd
+    entrypoint f_ae() = state.f_ae
+    entrypoint total_lqty_staked() = state.total_lqty_staked
     
     // --- Pending reward functions ---
 

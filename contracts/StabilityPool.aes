@@ -998,7 +998,7 @@ payable contract StabilityPool =
           None => ()
           Some(address) => switch(Map.lookup(address,state.front_ends))
             None => ()
-            Some(front_end) => require(!front_end.registered,
+            Some(front_end) => require(front_end.registered,
               "StabilityPool: Tag must be a registered front end, or no address")
 
     function  require_valid_kickback_rate(kickback_rate: int) =
