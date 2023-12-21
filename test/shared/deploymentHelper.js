@@ -19,8 +19,9 @@ const withLoggingAddresses = ( ret ) => {
     }, {} ) )
     return ret
 }
-const setupDeployment = async () => {
-    const sdk = await utils.createSdkInstance()
+
+const setupDeployment = async ( stablecoin , sdk ) => { 
+    //const sdk = await utils.createSdkInstance()
     const deploy = deployContract( sdk )
     const troveManager = await deploy( './contracts/TroveManager.aes' )
     const stabilityPool = await deploy( './contracts/StabilityPool.aes' )
@@ -43,7 +44,7 @@ const setupDeployment = async () => {
                 defaultPool        : await deploy( './contracts/DefaultPool.aes' ),
                 stabilityPool      : stabilityPool,
                 gasPool            : await deploy( './contracts/GasPool.aes' ),
-                aeusdToken         : await deploy( './contracts/AEUSDToken.aes', [ troveManager.address, stabilityPool.address, borrowerOperations.address ] ),
+                aeusdToken         : await deploy( stablecoin, [ troveManager.address, stabilityPool.address, borrowerOperations.address ] ),
 
                 //const functionCaller = await FunctionCaller.new()
                 //const hintHelpers = await HintHelpers.new()
@@ -151,4 +152,5 @@ const connectCoreContracts = async ( contracts, LQTYContracts ) => {
 module.exports = {
     setupDeployment,
     connectCoreContracts,
+    deployContract
 }

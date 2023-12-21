@@ -24,6 +24,10 @@ demo3:
 	npm test -- --grep "demo 3"
 demo-oracle:
 	npm test -- --grep "demo oracle"
+demo-eur:
+	npm test -- --grep "demo eur"
+demo-reentrant-call:
+	npm test -- --grep "reentrant call"
 pricefeed-local-service:
 	DEFAULT_NETWORK_NAME=local WALLET_FILE='./config/wallet-price-feed.json' CONTRACT_ADDRESS='ct_2Z42iQBz7Bc7uEawLJC5xzAiAvxGZzhKkjDK3HLo5f3vhTskbU' AWAIT_TIMEOUT_SECONDS=60 node price-service/price-service.js
 pricefeed-testnet-service:

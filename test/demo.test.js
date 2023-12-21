@@ -78,7 +78,7 @@ describe( 'Demo', () => {
         }
 
         utils.beforeEachWithSnapshot( 'deploy contract', async () => {
-            const { deployLiquityCore, deployLQTYContracts } = await setupDeployment()
+            const { deployLiquityCore, deployLQTYContracts } = await setupDeployment('./contracts/AEUSDToken.aes')
             contracts = await deployLiquityCore()
 
             ;( {

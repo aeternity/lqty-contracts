@@ -1,0 +1,32 @@
+@compiler >= 6
+
+include "B.aes"
+include "Option.aes"
+
+/* Purpose of this contract is to test reentrant calls
+Remove it after is no need for it
+*/
+
+main contract A =
+    record state = { b_contract: option(B)
+                   , counter: int
+                   }
+
+    entrypoint init() = {
+          counter = 0
+        , b_contract = None
+        }
+
+    stateful entrypoint set_addresses( b: B ) : unit =
+        put( state { b_contract = Some(b) } )
+
+
+    entrypoint test_call_me() : unit = 
+        Option.on_elem(state.b_contract, (b) => b.call_me())
+
+
+    stateful entrypoint call() : unit = 
+        put( state { counter = 1 } )
+
+    entrypoint counter(): int = state.counter
+

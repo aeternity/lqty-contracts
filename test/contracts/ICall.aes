@@ -1,0 +1,6 @@
+@compiler >= 6
+
+contract interface ICall =
+    // --- Functions ---
+    entrypoint call: () => unit
+

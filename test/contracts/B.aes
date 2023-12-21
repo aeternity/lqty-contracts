@@ -1,0 +1,25 @@
+@compiler >= 6
+
+include "./ICall.aes"
+include "Option.aes"
+
+/* Purpose of this contract is to test reentrant calls
+Remove it after is no need for it
+*/
+
+contract B =
+    record state = {
+           call_contract: option(ICall)
+           }
+
+    entrypoint init() = {
+          call_contract = None
+        }
+
+    stateful entrypoint set_addresses( c: ICall ) : unit =
+        put( state { call_contract = Some(c) } )
+    
+    entrypoint call_me() : unit = 
+        Option.on_elem(state.call_contract, (c) => c.call())
+
+

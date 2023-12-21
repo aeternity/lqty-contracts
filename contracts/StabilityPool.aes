@@ -891,7 +891,7 @@ payable contract StabilityPool =
     * Return the user's compounded deposit. Given by the formula:  d = d0 * P/P(0)
     * where P(0) is the depositor's snapshot of the product P, taken when they last updated their deposit.
     */
-    function get_compounded_aeusd_deposit(depositor: address): int =
+    entrypoint get_compounded_aeusd_deposit(depositor: address): int =
         let initial_deposit = Map.lookup_default(depositor,state.deposits,no_deposit()).initial_value
         if(initial_deposit == 0) 0
         else
